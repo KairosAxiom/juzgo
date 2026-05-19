@@ -1,6 +1,6 @@
 # esimconnect — Living Project Context
-Last updated: April 30, 2026
-Latest commit: c299f6ce
+Last updated: May 19, 2026
+Latest commit: c299f6ce (Session 13 commit pending)
 
 ---
 
@@ -17,6 +17,7 @@ Latest commit: c299f6ce
 - RLS: profiles, wallet_topups, voip_calls, push_subscriptions, resellers, corporates, corp_invites all have RLS enabled
 - Currency: SGD primary, GST 9% applied at checkout
 - URL Configuration: Site URL = https://esimconnect.world, Redirect URLs = https://esimconnect.world/**
+- Keep-alive: Cloudflare Worker cron "0 9 */3 * *" via claude-proxy scheduled() handler — prevents 7-day inactivity pause
 
 ## Stripe
 - Account: Kairos Axiom (acct_1TBAKEBOsstkemgx)
@@ -41,6 +42,8 @@ Latest commit: c299f6ce
 - Build command: npm run build
 - Output directory: build
 - Worker: claude-proxy.kairosventure-io.workers.dev (bridges frontend → Claude API + Airalo)
+- Worker cron: "0 9 */3 * *" — scheduled() handler in claude-proxy pings countries table (Supabase keep-alive, every 3 days @ 09:00 UTC)
+- Worker edit mode: dashboard-only (no Wrangler/Git deploy pipeline)
 - SPA fallback: public/_redirects — explicit route list → /index.html 200
 
 ## Render (Backend Hosting)
@@ -93,6 +96,12 @@ VAPID_PRIVATE_KEY=Or2S1ilMhCMjwsBuU3-55tuFXonU87lmSgZW5XmPqnU
 ADMIN_EMAIL=davidlim@esimconnect.world
 RESEND_API_KEY=re_[resend api key]
 PORT=4000
+
+### Cloudflare Worker (claude-proxy) Secrets
+ANTHROPIC_API_KEY=[claude api key]
+RESEND_API_KEY=re_[resend api key]
+SUPABASE_URL=https://emsovpcmdnuxrhbyvnvb.supabase.co
+SUPABASE_ANON_KEY=sb_publishable_yDr3YTcsErOPthkWXjjRRw_R4AaB3zA
 
 ---
 
@@ -438,6 +447,7 @@ Logged in:  My Itinerary → Plans → Dashboard → Purchases → Saved Trips �
 - [x] 🏢 Corp Portal navbar link for corp admins
 - [x] Forgot Password link on Login page
 - [x] Fixed CorporateRegister.js missing country dropdown
+- [x] Supabase keep-alive cron — claude-proxy scheduled() handler, every 3 days @ 09:00 UTC
 
 ---
 
@@ -452,7 +462,7 @@ PHASE 3 — Growth ← CURRENT
   [ ] Render upgrade to Starter $7/mo
 
 PHASE 4 — Expansion
-  [ ] Airalo API integration — map out and display live data plans
+  [ ] Airalo API integration — map out and display live data plans (replaces MOCK_PACKAGES in claude-proxy)
   [ ] Rollover loyalty (unused data → wallet credit at plan expiry)
   [ ] Plan tier grouping — Country / Regional / Global tabs on Plans page
   [ ] Reseller mini-sites (/r/:slug)
@@ -469,6 +479,14 @@ PHASE 4 — Expansion
 ### Data Plan Categories (post-Airalo onboarding)
 Airalo provides fixed data+validity bundles — we cannot create custom plans.
 Our value-add is categorisation, branding, pricing markup, and account structure.
+
+Note: until Airalo onboarding completes, the Plans page renders mock data from
+MOCK_PACKAGES inside the claude-proxy worker. Mock operator names visible on
+the live Plans page are placeholders (e.g. "Changi Connect" for SG, "Sakura
+Mobile" for JP, "Seoul Connect" for KR, "ThaiFi" for TH, "Boleh Connect" for
+MY, "OzConnect" for AU, "BritConnect" for GB, "StarConnect" for US). These
+will be replaced with real Airalo operator data when the worker switches from
+MOCK_PACKAGES to live Airalo API responses.
 
 | Category | Target User | Source |
 |---|---|---|
@@ -526,6 +544,7 @@ Pay-As-You-Go is NOT available via Airalo — requires a different provider (fut
 | Server/server.js | Express backend — all endpoints + Resend email |
 | Server/package.json | Backend deps (web-push, resend) |
 | Server/.env | Backend env vars |
+| Cloudflare Worker (claude-proxy) | Claude API + Airalo proxy + Supabase keep-alive scheduled() — edited via Cloudflare dashboard, not in this repo |
 
 ---
 
@@ -643,7 +662,50 @@ Files: Server/server.js, Server/package.json, src/pages/CorporateDashboard.js,
        src/pages/CorporateRegister.js, src/pages/Login.js
 Commits: a39437c2, 71a46bd9, c299f6ce
 
+### May 19, 2026 — Session 13 (Ops — Supabase keep-alive cron)
+Completed:
+- Triggered by Supabase pause warning email (7-day inactivity threshold)
+- Manual SQL ping run first to stop pause clock:
+    SELECT count(*) FROM countries;  → returned 0, activity registered
+- Added scheduled() handler to claude-proxy worker (edited directly in Cloudflare dashboard — worker is not deployed via Wrangler/Git):
+    Query: GET /rest/v1/countries?select=id&limit=1
+    Uses SUPABASE_ANON_KEY (countries is RLS-free public read, no service key needed)
+    Logs status + ISO timestamp to console
+- Cloudflare claude-proxy worker:
+    - Edit Code → merged scheduled() as sibling of fetch() inside index_default object → Deploy
+    - Verified Plans page still loads after deploy (proves existing fetch handler intact)
+    - Settings → Variables and Secrets → added SUPABASE_URL + SUPABASE_ANON_KEY (both as Secret type)
+    - Settings → Trigger Events → Add Cron Trigger: "0 9 */3 * *"
+    - Settings → Observability → Logs: Enabled
+- Cron registered, handler bound to scheduled(), next run: Tue 19 May 2026 09:00 UTC
+- Bug squashed pre-deploy: initial draft added a second `export default { ... }` block at the bottom of the file, which would have either failed to deploy or silently overridden the existing fetch handler and broken the live site. Fix: merged scheduled as a sibling method inside the existing `index_default` object, keeping the single `export { index_default as default }` statement intact.
+- Manual cron firing not available in Cloudflare UI — verification deferred to first scheduled run.
+
+Observed (not actioned this session):
+- MOCK_PACKAGES in claude-proxy hardcodes invented operator names per country
+  ("Changi Connect" for SG, "Sakura Mobile" for JP, "Seoul Connect" for KR, etc.).
+  These are placeholder names visible on the Plans page until Airalo onboarding
+  completes and the worker switches from MOCK_PACKAGES to live Airalo API responses.
+
+Files changed:
+- claude-proxy worker (Cloudflare dashboard — not in git repo)
+- CONTEXT.md
+Commits: [TBC — fill in after `git push`]
+
 Next session should:
-- Fix corp registration profile bug (is_corporate/corp_id/corp_role not set on signup)
+- Verify keep-alive cron ran successfully (Cloudflare → Workers → claude-proxy → Observability → Logs, after 19 May 09:00 UTC).
+  Expect: 1 Success event, log "keepalive 200 @ 2026-05-19T09:00:..."
+- Fix corp registration profile bug (is_corporate/corp_id/corp_role not always set on signup) — carried over from Session 12
 - Password strength enforcement on registration forms
-- Airalo API integration — map out and display live data plans
+- Airalo API integration — map out and display live data plans (replaces MOCK_PACKAGES in claude-proxy)
+
+---
+
+## Key Decisions Log
+| Date     | Decision                                        | Rationale                            |
+|----------|-------------------------------------------------|--------------------------------------|
+| May 2026 | Supabase keep-alive via CF Worker cron (not GH Actions / Render) | claude-proxy already in production; Render free spins down so unreliable for cron; one surface to maintain |
+| May 2026 | Cron schedule: "0 9 */3 * *" (every 3 days)     | Comfortable margin under Supabase 7-day inactivity threshold |
+| May 2026 | Keep-alive query: GET /rest/v1/countries?limit=1 | Minimal payload, proves Postgres awake; countries is RLS-free public read |
+| May 2026 | Use SUPABASE_ANON_KEY (not service role) in worker keep-alive | countries has no RLS-protected read; anon key already public in frontend; no new attack surface |
+| May 2026 | scheduled() merged into existing index_default object | JS only allows one default export; merging as sibling preserves existing fetch handler |
