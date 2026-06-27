@@ -1,13 +1,13 @@
-# esimconnect — Living Project Context
+# juzgo — Living Project Context
 Last updated: May 19, 2026
 Latest commit: c299f6ce (Session 13 commit pending)
 
 ---
 
 ## Repository
-- Repo: https://github.com/esimconnect/esimconnect
-- Live: https://esimconnect.world
-- Local: D:\Kairos\esimconnect
+- Repo: https://github.com/juzgo/juzgo
+- Live: https://juzgo.world
+- Local: D:\Kairos\juzgo
 - Branch: main
 
 ## Supabase
@@ -16,28 +16,28 @@ Latest commit: c299f6ce (Session 13 commit pending)
 - Existing tables: countries, esim_plans, esims, orders, profiles, push_subscriptions, resellers, saved_itineraries, usage_logs, users, voip_calls, waitlist, wallet_topups, corporates, corp_invites
 - RLS: profiles, wallet_topups, voip_calls, push_subscriptions, resellers, corporates, corp_invites all have RLS enabled
 - Currency: SGD primary, GST 9% applied at checkout
-- URL Configuration: Site URL = https://esimconnect.world, Redirect URLs = https://esimconnect.world/**
+- URL Configuration: Site URL = https://juzgo.world, Redirect URLs = https://juzgo.world/**
 - Keep-alive: Cloudflare Worker cron "0 9 */3 * *" via claude-proxy scheduled() handler — prevents 7-day inactivity pause
 
 ## Stripe
 - Account: Kairos Axiom (acct_1TBAKEBOsstkemgx)
-- Sandbox: esimconnect sandbox (use this one — keys start with pk_test_ / sk_test_ from esimconnect sandbox)
+- Sandbox: juzgo sandbox (use this one — keys start with pk_test_ / sk_test_ from juzgo sandbox)
 - Live keys: available under Kairos Axiom (sk_live_...05tE created 10 Apr — for production later)
 - Currency: SGD
 - Top-up: one-off PaymentIntent (not subscription)
-- Webhook: esimconnect-webhook (Active) — in Workbench → Webhooks, listens for payment_intent.succeeded
-- Webhook URL: https://esimconnect-backend.onrender.com/webhook
+- Webhook: juzgo-webhook (Active) — in Workbench → Webhooks, listens for payment_intent.succeeded
+- Webhook URL: https://juzgo-backend.onrender.com/webhook
 
 ## Resend (Email)
 - Account: kairosventure.io@gmail.com
-- Domain: esimconnect.world (Verified, Tokyo region)
-- From address: eSIMConnect <hello@esimconnect.world>
+- Domain: juzgo.world (Verified, Tokyo region)
+- From address: juzgo <hello@juzgo.world>
 - API key: stored in Render + Server/.env as RESEND_API_KEY
 
 ## Cloudflare
 - Account: kairosventure.io@gmail.com
-- Pages project: esimconnect (esimconnect-9dx.pages.dev)
-- Domains: esimconnect.world + www.esimconnect.world (both Active, SSL enabled)
+- Pages project: juzgo (juzgo-9dx.pages.dev)
+- Domains: juzgo.world + www.juzgo.world (both Active, SSL enabled)
 - Auto-deploys: Yes — every push to main triggers a build
 - Build command: npm run build
 - Output directory: build
@@ -47,8 +47,8 @@ Latest commit: c299f6ce (Session 13 commit pending)
 - SPA fallback: public/_redirects — explicit route list → /index.html 200
 
 ## Render (Backend Hosting)
-- Service: esimconnect-backend
-- URL: https://esimconnect-backend.onrender.com
+- Service: juzgo-backend
+- URL: https://juzgo-backend.onrender.com
 - Region: Singapore
 - Plan: Free (spins down after 15min inactivity — upgrade to Starter $7/mo for production)
 - Root directory: Server
@@ -56,44 +56,44 @@ Latest commit: c299f6ce (Session 13 commit pending)
 
 ## Environment Variables
 
-### Frontend: D:\Kairos\esimconnect\.env
-REACT_APP_STRIPE_PUBLISHABLE_KEY=pk_test_[esimconnect sandbox key]
+### Frontend: D:\Kairos\juzgo\.env
+REACT_APP_STRIPE_PUBLISHABLE_KEY=pk_test_[juzgo sandbox key]
 REACT_APP_SUPABASE_URL=https://emsovpcmdnuxrhbyvnvb.supabase.co
 REACT_APP_SUPABASE_ANON_KEY=sb_publishable_yDr3YTcsErOPthkWXjjRRw_R4AaB3zA
-REACT_APP_BACKEND_URL=https://esimconnect-backend.onrender.com
+REACT_APP_BACKEND_URL=https://juzgo-backend.onrender.com
 REACT_APP_VAPID_PUBLIC_KEY=BHWKg9LMTkn1uA9pgQweT2DNyCfNAvMTYqO2QXSN8YJhlxrysfS3Br_iZpGVCbZfslZZ9g_0bfWRnyKncrKHG4k
-REACT_APP_ADMIN_EMAIL=davidlim@esimconnect.world
+REACT_APP_ADMIN_EMAIL=davidlim@juzgo.world
 REACT_APP_TWILIO_ACCOUNT_SID=          (TBC)
 REACT_APP_TWILIO_AUTH_TOKEN=           (TBC)
 REACT_APP_TWILIO_PHONE_NUMBER=         (TBC)
 
-### Backend: D:\Kairos\esimconnect\Server\.env
-STRIPE_SECRET_KEY=sk_test_[esimconnect sandbox key]
-STRIPE_WEBHOOK_SECRET=whsec_[esimconnect webhook signing secret]
+### Backend: D:\Kairos\juzgo\Server\.env
+STRIPE_SECRET_KEY=sk_test_[juzgo sandbox key]
+STRIPE_WEBHOOK_SECRET=whsec_[juzgo webhook signing secret]
 SUPABASE_URL=https://emsovpcmdnuxrhbyvnvb.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=[supabase service role key]
 VAPID_PUBLIC_KEY=BHWKg9LMTkn1uA9pgQweT2DNyCfNAvMTYqO2QXSN8YJhlxrysfS3Br_iZpGVCbZfslZZ9g_0bfWRnyKncrKHG4k
 VAPID_PRIVATE_KEY=Or2S1ilMhCMjwsBuU3-55tuFXonU87lmSgZW5XmPqnU
-ADMIN_EMAIL=davidlim@esimconnect.world
+ADMIN_EMAIL=davidlim@juzgo.world
 RESEND_API_KEY=re_[resend api key]
 PORT=4000
 
 ### Cloudflare Pages Environment Variables
-REACT_APP_STRIPE_PUBLISHABLE_KEY=pk_test_[esimconnect sandbox key]
+REACT_APP_STRIPE_PUBLISHABLE_KEY=pk_test_[juzgo sandbox key]
 REACT_APP_SUPABASE_URL=https://emsovpcmdnuxrhbyvnvb.supabase.co
 REACT_APP_SUPABASE_ANON_KEY=sb_publishable_yDr3YTcsErOPthkWXjjRRw_R4AaB3zA
-REACT_APP_BACKEND_URL=https://esimconnect-backend.onrender.com
+REACT_APP_BACKEND_URL=https://juzgo-backend.onrender.com
 REACT_APP_VAPID_PUBLIC_KEY=BHWKg9LMTkn1uA9pgQweT2DNyCfNAvMTYqO2QXSN8YJhlxrysfS3Br_iZpGVCbZfslZZ9g_0bfWRnyKncrKHG4k
-REACT_APP_ADMIN_EMAIL=davidlim@esimconnect.world
+REACT_APP_ADMIN_EMAIL=davidlim@juzgo.world
 
 ### Render Environment Variables
-STRIPE_SECRET_KEY=sk_test_[esimconnect sandbox key]
-STRIPE_WEBHOOK_SECRET=whsec_[esimconnect webhook signing secret]
+STRIPE_SECRET_KEY=sk_test_[juzgo sandbox key]
+STRIPE_WEBHOOK_SECRET=whsec_[juzgo webhook signing secret]
 SUPABASE_URL=https://emsovpcmdnuxrhbyvnvb.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=[supabase service role key]
 VAPID_PUBLIC_KEY=BHWKg9LMTkn1uA9pgQweT2DNyCfNAvMTYqO2QXSN8YJhlxrysfS3Br_iZpGVCbZfslZZ9g_0bfWRnyKncrKHG4k
 VAPID_PRIVATE_KEY=Or2S1ilMhCMjwsBuU3-55tuFXonU87lmSgZW5XmPqnU
-ADMIN_EMAIL=davidlim@esimconnect.world
+ADMIN_EMAIL=davidlim@juzgo.world
 RESEND_API_KEY=re_[resend api key]
 PORT=4000
 
@@ -105,7 +105,7 @@ SUPABASE_ANON_KEY=sb_publishable_yDr3YTcsErOPthkWXjjRRw_R4AaB3zA
 
 ---
 
-## What esimconnect Does
+## What juzgo Does
 A travel tech platform for tourists and business travellers targeting:
 - eSIM data plans — browse, buy and activate eSIM plans for 190+ countries
 - VoIP calling — in-app calling via Twilio floating dialler widget (post-launch)
@@ -345,7 +345,7 @@ USR-[FIRSTNAME]-[SEQUENCE] e.g. USR-DAVID-00001
 2. Step 1: Company name, country (dropdown), UEN (SG only, optional), contact email (work email required — free domains blocked)
 3. Step 2: Admin personal details + password
 4. Account created with is_active=false, approval_status='pending'
-5. Admin (davidlim@esimconnect.world) receives email notification via Resend
+5. Admin (davidlim@juzgo.world) receives email notification via Resend
 6. Applicant receives 48hr review email via Resend
 7. Admin approves via Admin → Corporate tab → ✓ Approve
 8. Company receives approval email via Resend, account unlocks
@@ -390,7 +390,7 @@ Enforced on both frontend (CorporateRegister.js) and backend (server.js).
 
 ### Access
 - REACT_APP_ADMIN_EMAIL (frontend) + ADMIN_EMAIL (backend)
-- Currently: davidlim@esimconnect.world
+- Currently: davidlim@juzgo.world
 - ⚙️ Admin link in Navbar — admin email only
 
 ### Tabs
@@ -448,6 +448,7 @@ Logged in:  My Itinerary → Plans → Dashboard → Purchases → Saved Trips �
 - [x] Forgot Password link on Login page
 - [x] Fixed CorporateRegister.js missing country dropdown
 - [x] Supabase keep-alive cron — claude-proxy scheduled() handler, every 3 days @ 09:00 UTC
+- [x] Brand rename: esimconnect → juzgo, esimconnect.world → juzgo.world
 
 ---
 
@@ -550,7 +551,7 @@ Pay-As-You-Go is NOT available via Airalo — requires a different provider (fut
 
 ## Git Commands
 ```bash
-cd /d/Kairos/esimconnect
+cd /d/Kairos/juzgo
 git add [files]
 git commit -m "description"
 git push origin main
@@ -589,7 +590,7 @@ Completed: Push notifications end-to-end — Commits: 239c9e07 → 5a629d33
 
 ### April 29, 2026 — Session 9 (Admin + Reseller)
 Completed:
-- Reseller system fully designed (esimconnect-reseller-context.docx)
+- Reseller system fully designed (juzgo-reseller-context.docx)
 - Supabase: resellers table, reseller_code_seq, orders + profiles columns
 - Server/server.js: 15 new admin + reseller endpoints
 - Admin dashboard: 7 tabs (Orders, Users, Wallet, Logs, Resellers, Sales, Analytics)
@@ -653,7 +654,7 @@ Completed:
 - Stripe webhook recreated in new Workbench UI (old interface deprecated)
 - Fixed STRIPE_WEBHOOK_SECRET whitespace issue in Render env vars
 - Added Forgot Password link to Login page (type email → click link → Supabase sends reset email)
-- Supabase URL Configuration set: Site URL = https://esimconnect.world, Redirect = https://esimconnect.world/**
+- Supabase URL Configuration set: Site URL = https://juzgo.world, Redirect = https://juzgo.world/**
 - End-to-end test passed: register → pending → approve (email delivered) → invite staff (email delivered) → corp wallet top-up SGD 50 confirmed
 - npm install resend in Server/
 
@@ -692,18 +693,45 @@ Files changed:
 - CONTEXT.md
 Commits: [TBC — fill in after `git push`]
 
+### June 27, 2026 — Session 14 (Brand rename)
+Completed:
+- Full brand rename: esimconnect → juzgo, esimconnect.world → juzgo.world (all lowercase)
+- Updated CONTEXT.md — all references to esimconnect/esimconnect.world replaced
+- Code-level changes required (see checklist below)
+
+Files to update in codebase:
+- public/manifest.json — name, short_name, start_url, scope
+- public/index.html — <title> tag
+- src/pages/Home.js — any brand name in UI strings
+- src/pages/CorporateRegister.js — brand name in UI + email domain block (if juzgo.world used)
+- src/components/Navbar.js — brand name / logo text
+- src/components/Footer.js — brand name, domain links
+- src/components/AffiliateBar.js — brand name
+- src/components/TrustBadge.js — brand name
+- Server/server.js — email from address (hello@juzgo.world), any brand strings in email bodies
+- Server/.env — ADMIN_EMAIL=davidlim@juzgo.world, REACT_APP_ADMIN_EMAIL=davidlim@juzgo.world
+- .env (frontend) — REACT_APP_ADMIN_EMAIL=davidlim@juzgo.world, REACT_APP_BACKEND_URL=https://juzgo-backend.onrender.com
+
+Platform-level changes required (manual, outside codebase):
+- Supabase: update Site URL → https://juzgo.world, Redirect URLs → https://juzgo.world/**
+- Cloudflare Pages: rename project, add juzgo.world domain, remove esimconnect.world
+- Render: rename service to juzgo-backend, update ADMIN_EMAIL env var
+- Stripe: rename webhook to juzgo-webhook, update webhook URL to https://juzgo-backend.onrender.com/webhook
+- Resend: verify juzgo.world domain, update from address to hello@juzgo.world
+- GitHub: rename repo esimconnect/esimconnect → juzgo/juzgo (or update remote URL)
+
 Next session should:
-- Verify keep-alive cron ran successfully (Cloudflare → Workers → claude-proxy → Observability → Logs, after 19 May 09:00 UTC).
-  Expect: 1 Success event, log "keepalive 200 @ 2026-05-19T09:00:..."
-- Fix corp registration profile bug (is_corporate/corp_id/corp_role not always set on signup) — carried over from Session 12
+- Verify keep-alive cron ran successfully (Session 13 carry-over)
+- Work through the code-level rename checklist above file by file
+- Fix corp registration profile bug (is_corporate/corp_id/corp_role not always set on signup)
 - Password strength enforcement on registration forms
-- Airalo API integration — map out and display live data plans (replaces MOCK_PACKAGES in claude-proxy)
 
 ---
 
 ## Key Decisions Log
 | Date     | Decision                                        | Rationale                            |
 |----------|-------------------------------------------------|--------------------------------------|
+| Jun 2026 | Brand renamed: esimconnect → juzgo              | New brand identity, all lowercase    |
 | May 2026 | Supabase keep-alive via CF Worker cron (not GH Actions / Render) | claude-proxy already in production; Render free spins down so unreliable for cron; one surface to maintain |
 | May 2026 | Cron schedule: "0 9 */3 * *" (every 3 days)     | Comfortable margin under Supabase 7-day inactivity threshold |
 | May 2026 | Keep-alive query: GET /rest/v1/countries?limit=1 | Minimal payload, proves Postgres awake; countries is RLS-free public read |
