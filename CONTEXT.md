@@ -1,13 +1,13 @@
 # juzgo — Living Project Context
-Last updated: May 19, 2026
-Latest commit: c299f6ce (Session 13 commit pending)
+Last updated: June 27, 2026
+Latest commit: 550cb930
 
 ---
 
 ## Repository
-- Repo: https://github.com/juzgo/juzgo
+- Repo: https://github.com/KairosAxiom/juzgo
 - Live: https://juzgo.world
-- Local: D:\Kairos\juzgo
+- Local: E:\Kairos\juzgo
 - Branch: main
 
 ## Supabase
@@ -56,7 +56,7 @@ Latest commit: c299f6ce (Session 13 commit pending)
 
 ## Environment Variables
 
-### Frontend: D:\Kairos\juzgo\.env
+### Frontend: E:\Kairos\juzgo\.env
 REACT_APP_STRIPE_PUBLISHABLE_KEY=pk_test_[juzgo sandbox key]
 REACT_APP_SUPABASE_URL=https://emsovpcmdnuxrhbyvnvb.supabase.co
 REACT_APP_SUPABASE_ANON_KEY=sb_publishable_yDr3YTcsErOPthkWXjjRRw_R4AaB3zA
@@ -67,7 +67,7 @@ REACT_APP_TWILIO_ACCOUNT_SID=          (TBC)
 REACT_APP_TWILIO_AUTH_TOKEN=           (TBC)
 REACT_APP_TWILIO_PHONE_NUMBER=         (TBC)
 
-### Backend: D:\Kairos\juzgo\Server\.env
+### Backend: E:\Kairos\juzgo\Server\.env
 STRIPE_SECRET_KEY=sk_test_[juzgo sandbox key]
 STRIPE_WEBHOOK_SECRET=whsec_[juzgo webhook signing secret]
 SUPABASE_URL=https://emsovpcmdnuxrhbyvnvb.supabase.co
@@ -551,7 +551,7 @@ Pay-As-You-Go is NOT available via Airalo — requires a different provider (fut
 
 ## Git Commands
 ```bash
-cd /d/Kairos/juzgo
+cd /e/Kairos/juzgo
 git add [files]
 git commit -m "description"
 git push origin main
@@ -718,7 +718,7 @@ Platform-level changes required (manual, outside codebase):
 - Render: rename service to juzgo-backend, update ADMIN_EMAIL env var
 - Stripe: rename webhook to juzgo-webhook, update webhook URL to https://juzgo-backend.onrender.com/webhook
 - Resend: verify juzgo.world domain, update from address to hello@juzgo.world
-- GitHub: rename repo esimconnect/esimconnect → juzgo/juzgo (or update remote URL)
+- GitHub: ✅ Done — repo renamed to KairosAxiom/juzgo, GitHub org renamed from esimconnect → KairosAxiom, remote URL updated
 
 Next session should:
 - Verify keep-alive cron ran successfully (Session 13 carry-over)
