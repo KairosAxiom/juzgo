@@ -60,7 +60,7 @@ export default function Navbar() {
             {t('nav_plans', lang)}
           </Link>
           <Link to="/terms" className={`${styles.link} ${isActive('/terms') ? styles.linkActive : ''}`}>
-            {t('nav_terms', lang)}
+            Terms &amp; Conditions
           </Link>
 
           {user ? (
@@ -114,7 +114,7 @@ export default function Navbar() {
         <div className={styles.drawer}>
           <Link to="/itinerary" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_itinerary', lang)}</Link>
           <Link to="/plans" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_plans', lang)}</Link>
-          <Link to="/terms" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_terms', lang)}</Link>
+          <Link to="/terms" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>Terms &amp; Conditions</Link>
           {user ? (
             <>
               <Link to="/dashboard" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_dashboard', lang)}</Link>

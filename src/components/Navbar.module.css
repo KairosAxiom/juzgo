@@ -32,7 +32,7 @@
 
 .logoText {
   font-family: 'Outfit', sans-serif;
-  font-size: 32px;
+  font-size: 52px;
   font-weight: 700;
   letter-spacing: -.03em;
   color: #2A6FDB;
@@ -180,5 +180,5 @@
 
 @media (max-width: 480px) {
   .inner { padding: 0 18px; }
-  .logoText { font-size: 26px; }
+  .logoText { font-size: 42px; }
 }
