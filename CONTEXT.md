@@ -1,6 +1,6 @@
 # juzgo — Living Project Context
-Last updated: June 27, 2026
-Latest commit: 550cb930
+Last updated: June 29, 2026
+Latest commit: d0c83b34
 
 ---
 
@@ -36,8 +36,8 @@ Latest commit: 550cb930
 
 ## Cloudflare
 - Account: kairosventure.io@gmail.com
-- Pages project: juzgo (juzgo-9dx.pages.dev)
-- Domains: juzgo.world + www.juzgo.world (both Active, SSL enabled)
+- Pages project: esimconnect (esimconnect-9dx.pages.dev) — internal name unchanged; juzgo.world is the live domain
+- Domains: juzgo.world + www.juzgo.world (both Active, SSL enabled); esimconnect.world + www.esimconnect.world still active (not yet removed)
 - Auto-deploys: Yes — every push to main triggers a build
 - Build command: npm run build
 - Output directory: build
@@ -712,17 +712,33 @@ Files to update in codebase:
 - Server/.env — ADMIN_EMAIL=davidlim@juzgo.world, REACT_APP_ADMIN_EMAIL=davidlim@juzgo.world
 - .env (frontend) — REACT_APP_ADMIN_EMAIL=davidlim@juzgo.world, REACT_APP_BACKEND_URL=https://juzgo-backend.onrender.com
 
-Platform-level changes required (manual, outside codebase):
-- Supabase: update Site URL → https://juzgo.world, Redirect URLs → https://juzgo.world/**
-- Cloudflare Pages: rename project, add juzgo.world domain, remove esimconnect.world
-- Render: rename service to juzgo-backend, update ADMIN_EMAIL env var
-- Stripe: rename webhook to juzgo-webhook, update webhook URL to https://juzgo-backend.onrender.com/webhook
-- Resend: verify juzgo.world domain, update from address to hello@juzgo.world
-- GitHub: ✅ Done — repo renamed to KairosAxiom/juzgo, GitHub org renamed from esimconnect → KairosAxiom, remote URL updated
+Platform-level changes — all completed ✅:
+- ✅ Supabase: Site URL → https://juzgo.world, Redirect URLs → https://juzgo.world/**
+- ✅ Cloudflare Pages: juzgo.world + www.juzgo.world added as custom domains (Active, SSL); REACT_APP_BACKEND_URL updated to https://juzgo-backend.onrender.com; project internal name still esimconnect (no rename button exists)
+- ✅ Render: service renamed to juzgo-backend; ADMIN_EMAIL deliberately left as davidlim@esimconnect.world until juzgo.world mailbox confirmed working
+- ✅ Stripe: webhook renamed to juzgo-webhook, URL updated to https://juzgo-backend.onrender.com/webhook
+- ✅ Resend: juzgo.world domain verified (Tokyo region); esimconnect.world deleted (free plan = 1 domain)
+- ✅ GitHub: repo renamed to KairosAxiom/juzgo, org renamed from esimconnect → KairosAxiom, remote URL updated
+- ✅ Email: davidlim@juzgo.world set up via Cloudflare Email Routing → forwards to kairosventure.io@gmail.com (verified, tested working — lands in Gmail, initially in spam, mark Not Spam to train)
+
+### June 29, 2026 — Session 15 (Platform rename sweep)
+Completed:
+- Supabase URL Configuration: Site URL = https://juzgo.world, Redirect URLs = https://juzgo.world/**
+- Render: service renamed esimconnect-backend → juzgo-backend; REACT_APP_BACKEND_URL updated in Cloudflare Pages env vars; ADMIN_EMAIL left as davidlim@esimconnect.world (juzgo.world mailbox not yet ready at time of Render update)
+- Cloudflare Pages: juzgo.world + www.juzgo.world added as custom domains (both Active, SSL enabled); REACT_APP_BACKEND_URL = https://juzgo-backend.onrender.com saved
+- GoDaddy: nameservers for juzgo.world updated to curt.ns.cloudflare.com + nova.ns.cloudflare.com
+- Cloudflare: juzgo.world domain activated (DNS propagation confirmed)
+- Resend: esimconnect.world deleted, juzgo.world added and verified; DKIM + SPF + MX records added to Cloudflare DNS
+- Stripe: esimconnect-webhook renamed to juzgo-webhook, endpoint URL updated to https://juzgo-backend.onrender.com/webhook (Active)
+- Cloudflare Email Routing: davidlim@juzgo.world → kairosventure.io@gmail.com (routing rule Active, both destination addresses Verified, forwarding tested and confirmed working)
+
+Files changed: CONTEXT.md
+Commits: d0c83b34 (previous), [TBC this session]
 
 Next session should:
-- Verify keep-alive cron ran successfully (Session 13 carry-over)
-- Work through the code-level rename checklist above file by file
+- Update ADMIN_EMAIL in Render + REACT_APP_ADMIN_EMAIL in Cloudflare Pages to davidlim@juzgo.world (mailbox now working)
+- Update server.js Resend from address to hello@juzgo.world
+- Work through codebase rename checklist: manifest.json, index.html, Navbar, Footer, AffiliateBar, TrustBadge, Home.js, CorporateRegister.js
 - Fix corp registration profile bug (is_corporate/corp_id/corp_role not always set on signup)
 - Password strength enforcement on registration forms
 
@@ -731,6 +747,10 @@ Next session should:
 ## Key Decisions Log
 | Date     | Decision                                        | Rationale                            |
 |----------|-------------------------------------------------|--------------------------------------|
+| Jun 2026 | Cloudflare Email Routing for davidlim@juzgo.world (not Zoho) | Zoho free plan = 1 domain only; Cloudflare Email Routing is free, instant, no extra cost; forwards to existing Gmail |
+| Jun 2026 | ADMIN_EMAIL kept as davidlim@esimconnect.world temporarily | juzgo.world mailbox not confirmed working at time of Render update; will update once forwarding verified |
+| Jun 2026 | Cloudflare Pages project internal name left as esimconnect | No rename button exists in Cloudflare Pages; internal name is irrelevant — live domain is juzgo.world |
+| Jun 2026 | Resend: deleted esimconnect.world, added juzgo.world | Free plan = 1 domain; fully committed to juzgo.world for all transactional email |
 | Jun 2026 | Brand renamed: esimconnect → juzgo              | New brand identity, all lowercase    |
 | May 2026 | Supabase keep-alive via CF Worker cron (not GH Actions / Render) | claude-proxy already in production; Render free spins down so unreliable for cron; one surface to maintain |
 | May 2026 | Cron schedule: "0 9 */3 * *" (every 3 days)     | Comfortable margin under Supabase 7-day inactivity threshold |
