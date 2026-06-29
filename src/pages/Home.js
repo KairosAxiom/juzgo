@@ -72,10 +72,11 @@ export default function Home() {
 
           {/* Hero visual placeholder */}
           <div className={styles.heroVisual}>
-            <div className={styles.heroImgPlaceholder}>
-              <span className={styles.heroPlaceholderText}>🌏</span>
-              <span className={styles.heroPlaceholderSub}>Drop a hero image here</span>
-            </div>
+            <img
+              src="/images/hero.png"
+              alt="Stay connected everywhere you travel"
+              className={styles.heroImg}
+            />
           </div>
         </div>
       </section>
