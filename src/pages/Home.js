@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useLang, t } from '../lib/i18n';
+import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
 import styles from './Home.module.css';
 
@@ -34,7 +34,7 @@ const AFFILIATES = ['Tiqets', 'Booking.com', 'Klook', 'Expedia'];
 
 export default function Home() {
   const navigate = useNavigate();
-  const { lang } = useLang();
+  const { lang, t } = useLang();
 
   return (
     <div className={styles.page}>

@@ -1,10 +1,10 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { useLang, t } from '../lib/i18n';
+import { useLang } from '../lib/i18n';
 import styles from './Footer.module.css';
 
 export default function Footer() {
-  const { lang } = useLang();
+  const { lang, t } = useLang();
 
   return (
     <footer className={styles.footer}>

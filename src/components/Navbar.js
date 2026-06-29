@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useLang, t } from '../lib/i18n';
+import { useLang } from '../lib/i18n';
 import LanguageToggle from './LanguageToggle';
 import styles from './Navbar.module.css';
 
@@ -11,7 +11,7 @@ export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { lang } = useLang();
+  const { lang, t } = useLang();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {

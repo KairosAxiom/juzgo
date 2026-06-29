@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { loadStripe } from '@stripe/stripe-js';
 import { CardElement, Elements, useStripe, useElements } from '@stripe/react-stripe-js';
 import { supabase } from '../lib/supabase';
-import { useLang, t } from '../lib/i18n';
+import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
 import styles from './Checkout.module.css';
 
@@ -15,7 +15,7 @@ function CheckoutForm({ plan, country, user, walletBalance }) {
   const stripe = useStripe();
   const elements = useElements();
   const navigate = useNavigate();
-  const { lang } = useLang();
+  const { lang, t } = useLang();
 
   const [payMethod, setPayMethod] = useState('card');
   const [email, setEmail] = useState(user?.email || '');

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useLang, t } from '../lib/i18n';
+import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
 import styles from './Plans.module.css';
 
@@ -13,7 +13,7 @@ export default function Plans() {
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const { lang } = useLang();
+  const { lang, t } = useLang();
 
   useEffect(() => {
     fetchCountries();

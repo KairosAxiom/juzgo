@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useLang, t } from '../lib/i18n';
+import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
 import styles from './Dashboard.module.css';
 
@@ -17,7 +17,7 @@ export default function Dashboard() {
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [copied, setCopied] = useState('');
   const navigate = useNavigate();
-  const { lang } = useLang();
+  const { lang, t } = useLang();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {

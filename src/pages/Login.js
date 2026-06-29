@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useLang, t } from '../lib/i18n';
+import { useLang } from '../lib/i18n';
 import styles from './Auth.module.css';
 
 export default function Login() {
@@ -10,7 +10,7 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const { lang } = useLang();
+  const { lang, t } = useLang();
 
   async function handleLogin(e) {
     e.preventDefault();

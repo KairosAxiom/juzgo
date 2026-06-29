@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useLang, t } from '../lib/i18n';
+import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
 import styles from './Itinerary.module.css';
 
@@ -36,7 +36,7 @@ export default function Itinerary() {
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
   const chatRef = useRef(null);
-  const { lang } = useLang();
+  const { lang, t } = useLang();
   const navigate = useNavigate();
 
   useEffect(() => {
