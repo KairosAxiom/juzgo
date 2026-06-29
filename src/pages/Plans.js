@@ -1,156 +1,149 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Navbar from '../components/Navbar';
+import { supabase } from '../lib/supabase';
+import { useLang, t } from '../lib/i18n';
+import Footer from '../components/Footer';
 import styles from './Plans.module.css';
-import AffiliateBar from '../components/AffiliateBar';
-import { useLang } from '../lib/i18n';
 
-const WORKER_URL = 'https://claude-proxy.kairosventure-io.workers.dev';
-
-const MOCK_COUNTRIES = [
-  { code: 'SG', name: 'Singapore', flag: '🇸🇬' },
-  { code: 'JP', name: 'Japan', flag: '🇯🇵' },
-  { code: 'KR', name: 'South Korea', flag: '🇰🇷' },
-  { code: 'TH', name: 'Thailand', flag: '🇹🇭' },
-  { code: 'MY', name: 'Malaysia', flag: '🇲🇾' },
-  { code: 'AU', name: 'Australia', flag: '🇦🇺' },
-  { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
-  { code: 'US', name: 'United States', flag: '🇺🇸' },
-];
+const AFFILIATES = ['Tiqets', 'Booking.com', 'Klook', 'Expedia'];
 
 export default function Plans() {
-  const { t } = useLang();
+  const [countries, setCountries] = useState([]);
   const [plans, setPlans] = useState([]);
-  const [selectedCountry, setSelectedCountry] = useState('SG');
-  const [countryMeta, setCountryMeta] = useState(MOCK_COUNTRIES[0]);
+  const [selectedCountry, setSelectedCountry] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const { lang } = useLang();
 
   useEffect(() => {
-    fetchPlans(selectedCountry);
+    fetchCountries();
+  }, []);
+
+  useEffect(() => {
+    if (selectedCountry) fetchPlans(selectedCountry.id);
   }, [selectedCountry]);
 
-  const fetchPlans = async (countryCode) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${WORKER_URL}/airalo/packages?country=${countryCode}`);
-      const json = await res.json();
-      if (json.data && json.data.length > 0) {
-        const operator = json.data[0].operators[0];
-        const packages = operator?.packages || [];
-        setPlans(packages.map(pkg => ({
-          ...pkg,
-          operator: operator?.title || '',
-          country_code: countryCode,
-        })));
-      } else {
-        setPlans([]);
-      }
-    } catch (err) {
-      setError(t('error'));
-      setPlans([]);
+  async function fetchCountries() {
+    const { data } = await supabase.from('countries').select('*').order('name');
+    if (data?.length) {
+      setCountries(data);
+      setSelectedCountry(data[0]);
     }
     setLoading(false);
-  };
+  }
 
-  const handleCountryChange = (e) => {
-    const code = e.target.value;
-    setSelectedCountry(code);
-    const meta = MOCK_COUNTRIES.find(c => c.code === code);
-    setCountryMeta(meta || MOCK_COUNTRIES[0]);
-  };
+  async function fetchPlans(countryId) {
+    setLoading(true);
+    const { data } = await supabase
+      .from('esim_plans')
+      .select('*')
+      .eq('country_id', countryId)
+      .eq('is_active', true)
+      .order('price_sgd');
+    setPlans(data || []);
+    setLoading(false);
+  }
 
-  const handleBuy = (plan) => {
-    navigate('/checkout', {
-      state: {
-        plan: {
-          id: plan.id,
-          plan_name: plan.title,
-          data_gb: (plan.amount / 1024).toFixed(0),
-          validity_days: plan.day,
-          price_sgd: (plan.price * 1.35).toFixed(2),
-          price_usd: plan.price,
-          operator: plan.operator,
-          country_code: plan.country_code,
-          is_unlimited: plan.is_unlimited,
-        },
-        country: {
-          name: countryMeta.name,
-          flag_emoji: countryMeta.flag,
-          iso_code: countryMeta.code,
-        },
-      },
-    });
-  };
+  function handleBuy(plan) {
+    navigate('/checkout', { state: { plan, country: selectedCountry } });
+  }
+
+  const isUnlimited = (p) => p.plan_name?.toLowerCase().includes('unlimited') || p.data_gb >= 100;
 
   return (
     <div className={styles.page}>
-      <Navbar />
       <main className={styles.main}>
+
+        {/* Header */}
         <div className={styles.header}>
-          <h1 className={styles.title}>{t('plans_title')}</h1>
-          <p className={styles.sub}>{t('home_hero_sub')}</p>
+          <div className={styles.eyebrow}>eSIM Plans</div>
+          <h1 className={styles.h1}>Data that travels<br />with you.</h1>
+          <p className={styles.sub}>Instant eSIM plans for 190+ countries. No SIM swaps, no roaming surprises.</p>
         </div>
 
-        <div className={styles.filters}>
-          <select
-            className={styles.countrySelect}
-            value={selectedCountry}
-            onChange={handleCountryChange}
-          >
-            {MOCK_COUNTRIES.map(c => (
-              <option key={c.code} value={c.code}>
-                {c.flag} {c.name}
-              </option>
+        {/* Country selector */}
+        <div className={styles.selectorWrap}>
+          <div className={styles.selectorBox}>
+            <select
+              value={selectedCountry?.id || ''}
+              onChange={(e) => {
+                const c = countries.find((c) => String(c.id) === e.target.value);
+                setSelectedCountry(c);
+              }}
+              className={styles.select}
+            >
+              {countries.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.flag_emoji} {c.name}
+                </option>
+              ))}
+            </select>
+            <span className={styles.selectArrow}>▼</span>
+          </div>
+        </div>
+
+        {/* Affiliate bar */}
+        <div className={styles.affiliateBar}>
+          <span className={styles.affiliateLabel}>Complete your trip — book hotels, flights &amp; activities:</span>
+          <div className={styles.affiliatePills}>
+            {AFFILIATES.map((a) => (
+              <span key={a} className={styles.affiliatePill}>{a}</span>
             ))}
-          </select>
+          </div>
         </div>
 
+        {/* Plan grid */}
         {loading ? (
           <div className={styles.loading}>
-            <div className={styles.spinner}></div>
+            <div className={styles.spinner} />
           </div>
-        ) : error ? (
-          <div className={styles.empty}>{error}</div>
         ) : plans.length === 0 ? (
-          <div className={styles.empty}>{t('plans_no_results')}</div>
+          <div className={styles.empty}>
+            <p>No plans available for this destination yet. <br />Check back soon or <a href="mailto:hello@juzgo.world">contact us</a>.</p>
+          </div>
         ) : (
-          <>
-            <AffiliateBar context="plans" />
-            <div className={styles.grid}>
-              {plans.map(plan => (
-                <div key={plan.id} className={styles.card}>
-                  <div className={styles.cardTop}>
-                    <span className={styles.flag}>{countryMeta.flag}</span>
-                    <span className={styles.country}>{countryMeta.name}</span>
+          <div className={styles.planGrid}>
+            {plans.map((plan, i) => {
+              const unlimited = isUnlimited(plan);
+              const popular = !unlimited && i === 1;
+              return (
+                <div
+                  key={plan.id}
+                  className={`${styles.planCard} ${popular ? styles.planCardPopular : ''} ${unlimited ? styles.planCardUnlimited : ''}`}
+                >
+                  {popular && <span className={`${styles.badge}`}>Most popular</span>}
+                  {unlimited && <span className={`${styles.badge} ${styles.badgeBlue}`}>Unlimited</span>}
+
+                  <div className={styles.planCountry}>
+                    <span className={styles.planFlag}>{selectedCountry?.flag_emoji}</span>
+                    <span className={styles.planCountryName}>{selectedCountry?.name}</span>
                   </div>
-                  <div className={styles.planName}>{plan.title}</div>
-                  <div className={styles.planDetails}>
-                    <span className={styles.data}>
-                      {plan.is_unlimited ? 'Unlimited' : `${(plan.amount / 1024).toFixed(0)}${t('gb')}`}
-                    </span>
-                    <span className={styles.sep}>·</span>
-                    <span>{plan.day} {t('plans_days')}</span>
+
+                  <div className={styles.planData}>
+                    {unlimited ? 'Unlimited' : `${plan.data_gb} GB`}
                   </div>
-                  <div className={styles.operatorLabel}>{plan.operator}</div>
-                  <div className={styles.price}>
-                    <span className={styles.currency}>{t('sgd')}</span>
-                    <span className={styles.amount}>{(plan.price * 1.35).toFixed(2)}</span>
+                  <div className={styles.planDays}>{plan.validity_days} days · local 5G network</div>
+
+                  <hr className={styles.divider} />
+
+                  <div className={styles.planPrice}>
+                    <span className={styles.planCurrency}>SGD</span>
+                    <span className={styles.planAmount}>{parseFloat(plan.price_sgd).toFixed(2)}</span>
                   </div>
+
                   <button
-                    className={styles.buyBtn}
+                    className={unlimited ? styles.btnBlue : styles.btnGreen}
                     onClick={() => handleBuy(plan)}
                   >
-                    {t('plans_buy')} →
+                    Buy now →
                   </button>
                 </div>
-              ))}
-            </div>
-          </>
+              );
+            })}
+          </div>
         )}
       </main>
+      <Footer />
     </div>
   );
 }

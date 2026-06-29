@@ -1,124 +1,95 @@
 import React, { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import Navbar from '../components/Navbar';
+import { useLang, t } from '../lib/i18n';
 import styles from './Auth.module.css';
-import { useLang } from '../lib/i18n';
 
 export default function Login() {
-  const { t } = useLang();
-  const navigate = useNavigate();
-  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [resetSent, setResetSent] = useState(false);
-  const [resetLoading, setResetLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+  const { lang } = useLang();
 
-  const handleForgotPassword = async () => {
-    if (!email.trim()) {
-      setError('Enter your email address above first, then click Forgot Password.');
-      return;
-    }
-    setResetLoading(true);
-    setError('');
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: 'https://esimconnect.world/dashboard',
-    });
-    setResetLoading(false);
-    if (error) {
-      setError(error.message);
-    } else {
-      setResetSent(true);
-    }
-  };
-
-  const handleLogin = async (e) => {
+  async function handleLogin(e) {
     e.preventDefault();
-    setLoading(true);
     setError('');
-
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-    } else {
-      const fromItinerary = new URLSearchParams(location.search).get('from') === 'itinerary';
-      if (fromItinerary) {
-        navigate('/login-success');
-      } else {
-        navigate('/dashboard');
-      }
-    }
-  };
+    setLoading(true);
+    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (err) { setError(err.message); return; }
+    navigate('/dashboard');
+  }
 
   return (
     <div className={styles.page}>
-      <Navbar />
-      <main className={styles.main}>
-        <div className={styles.card}>
-          <div className={styles.cardHead}>
-            <h1 className={styles.title}>Welcome back</h1>
-            <p className={styles.sub}>Sign in to your eSIM Connect account</p>
+      <div className={styles.card}>
+
+        {/* Left panel — brand */}
+        <div className={styles.brandPanel}>
+          <div className={styles.brandLogo}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.4">
+              <circle cx="12" cy="12" r="9.5" />
+              <ellipse cx="12" cy="12" rx="4" ry="9.5" />
+              <line x1="2.5" y1="12" x2="21.5" y2="12" />
+            </svg>
+            <span className={styles.brandName}>Juzgo</span>
+          </div>
+          <blockquote className={styles.brandQuote}>
+            "Your next twelve trips start here."
+          </blockquote>
+          <div className={styles.brandTag}>Juzgo · members</div>
+        </div>
+
+        {/* Right panel — form */}
+        <div className={styles.formPanel}>
+          {/* Tab switcher */}
+          <div className={styles.tabs}>
+            <span className={`${styles.tab} ${styles.tabActive}`}>Log in</span>
+            <Link to="/register" className={styles.tab}>Register</Link>
           </div>
 
-          {error && <div className={styles.error}>{error}</div>}
+          <h2 className={styles.formH2}>Welcome back.</h2>
+          <p className={styles.formSub}>Sign in to your Juzgo account.</p>
 
           <form onSubmit={handleLogin} className={styles.form}>
-            <div className={styles.field}>
-              <label>{t('auth_email')}</label>
-              <input
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required
-              />
-            </div>
+            <label className={styles.label}>Email</label>
+            <input
+              type="email"
+              placeholder="your@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={styles.input}
+              required
+            />
 
-            <div className={styles.field}>
-              <label>{t('auth_password')}</label>
-              <input
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-              />
-            </div>
+            <label className={styles.label}>Password</label>
+            <input
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={styles.input}
+              required
+            />
 
-            <button type="submit" className={styles.submitBtn} disabled={loading}>
-              {loading ? <span className={styles.spinner}></span> : `${t('auth_login')} →`}
+            {error && <div className={styles.error}>{error}</div>}
+
+            <button type="submit" className={styles.btnPrimary} disabled={loading}>
+              {loading ? 'Signing in…' : 'Log in →'}
             </button>
-
-            <div style={{ textAlign: 'right', marginTop: '8px' }}>
-              <button
-                type="button"
-                onClick={handleForgotPassword}
-                disabled={resetLoading}
-                style={{
-                  background: 'none', border: 'none', color: '#38bdf8',
-                  fontSize: '0.83rem', cursor: 'pointer', padding: 0,
-                  textDecoration: 'underline',
-                }}
-              >
-                {resetLoading ? 'Sending…' : 'Forgot password?'}
-              </button>
-            </div>
-            {resetSent && (
-              <p style={{ color: '#34d399', fontSize: '0.85rem', margin: '8px 0 0', textAlign: 'center' }}>
-                ✅ Password reset email sent — check your inbox.
-              </p>
-            )}
           </form>
 
+          <div className={styles.forgotWrap}>
+            <span className={styles.forgot}>Forgot password?</span>
+          </div>
+
           <p className={styles.switchText}>
-            {t('auth_no_account')} <Link to="/register">{t('auth_register')}</Link>
+            No account? <Link to="/register" className={styles.switchLink}>Create one</Link>
           </p>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

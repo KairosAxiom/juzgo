@@ -1,0 +1,53 @@
+/* AffiliateBar.module.css — Juzgo refresh */
+
+.bar {
+  background: #FBFDFC;
+  padding: 16px 32px;
+}
+
+.inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: #F1F6F3;
+  border: 1px solid #E2E9E5;
+  border-radius: 16px;
+  padding: 16px 22px;
+}
+
+.label {
+  font-size: 14px;
+  color: #5B6B62;
+  flex-shrink: 0;
+}
+
+.pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  background: #fff;
+  border: 1px solid #E2E9E5;
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #16271E;
+  text-decoration: none;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: border-color .15s, color .15s;
+  white-space: nowrap;
+}
+.pill:hover { border-color: #1E8E5E; color: #1E8E5E; }
+
+@media (max-width: 640px) {
+  .bar { padding: 12px 18px; }
+  .inner { flex-direction: column; align-items: flex-start; padding: 14px 16px; }
+  .label { font-size: 13px; }
+}

@@ -1,0 +1,279 @@
+/* Pages.module.css — shared by SavedItineraries, FindMyOrder, OrderConfirmation, TermsAndConditions, LoginSuccess */
+
+/* ── Common page shell ── */
+.page { display: flex; flex-direction: column; min-height: 100vh; }
+
+.main {
+  flex: 1;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 72px 32px 90px;
+  width: 100%;
+}
+
+.mainWide {
+  flex: 1;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 72px 32px 90px;
+  width: 100%;
+}
+
+.eyebrow {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: #2A6FDB;
+  margin-bottom: 14px;
+}
+
+.h1 {
+  font-family: 'Newsreader', serif;
+  font-weight: 500;
+  font-size: clamp(34px, 5vw, 52px);
+  letter-spacing: -.02em;
+  color: #16271E;
+  margin: 0 0 14px;
+}
+
+.sub {
+  font-size: 17px;
+  color: #5B6B62;
+  margin: 0 0 44px;
+}
+
+/* Loading / spinner */
+.loading { display: flex; justify-content: center; padding: 80px 0; }
+.spinner {
+  width: 40px; height: 40px;
+  border: 3px solid #E2E9E5; border-top-color: #1E8E5E;
+  border-radius: 50%; animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Empty state */
+.empty { text-align: center; padding: 80px 0; }
+.emptyIcon { font-size: 56px; margin-bottom: 20px; }
+.emptyH3 {
+  font-family: 'Newsreader', serif;
+  font-weight: 500; font-size: 26px;
+  color: #16271E; margin: 0 0 10px;
+}
+.emptySub { font-size: 16px; color: #5B6B62; margin: 0 0 28px; }
+
+/* Buttons */
+.btnPrimary {
+  background: #1E8E5E; color: #fff; border: none;
+  border-radius: 999px; padding: 13px 28px;
+  font-size: 15px; font-weight: 600; cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif; transition: background .18s;
+  display: inline-block; text-decoration: none;
+}
+.btnPrimary:hover { background: #15734B; }
+
+.btnOutline {
+  background: transparent; color: #5B6B62;
+  border: 1px solid #E2E9E5; border-radius: 999px;
+  padding: 13px 28px; font-size: 15px; font-weight: 500;
+  cursor: pointer; font-family: 'Hanken Grotesk', sans-serif;
+  transition: border-color .15s; display: inline-block; text-decoration: none;
+}
+.btnOutline:hover { border-color: #1E8E5E; color: #1E8E5E; }
+
+/* Label / input */
+.label {
+  display: block; font-size: 13px; font-weight: 600;
+  color: #3A4A41; margin-bottom: 8px; margin-top: 18px;
+}
+.label:first-child { margin-top: 0; }
+
+.input {
+  width: 100%; background: #F4F8F6;
+  border: 1px solid #E2E9E5; border-radius: 12px;
+  padding: 14px 16px; font-size: 15px; color: #16271E;
+  outline: none; font-family: 'Hanken Grotesk', sans-serif;
+  transition: border-color .15s;
+}
+.input:focus { border-color: #1E8E5E; }
+
+.error {
+  background: #FEF2F2; border: 1px solid #FECACA;
+  color: #B91C1C; border-radius: 10px;
+  padding: 11px 14px; font-size: 13px; margin: 10px 0;
+}
+
+/* ── SavedItineraries ── */
+.itinGrid { display: flex; flex-direction: column; gap: 16px; }
+
+.itinCard {
+  background: #fff; border: 1px solid #E2E9E5;
+  border-radius: 18px; padding: 22px 24px;
+  transition: box-shadow .2s;
+}
+.itinCard:hover { box-shadow: 0 8px 24px -12px rgba(22,39,30,.12); }
+
+.itinTop { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+
+.itinTitle {
+  font-family: 'Newsreader', serif;
+  font-weight: 500; font-size: 22px; color: #16271E; margin: 0 0 6px;
+}
+
+.itinDate { font-size: 13px; color: #6A7A70; }
+
+.itinActions { display: flex; gap: 10px; align-items: center; }
+
+.btnView {
+  font-size: 13px; font-weight: 600; color: #1E8E5E;
+  border: 1px solid #1E8E5E; border-radius: 999px;
+  padding: 7px 16px; cursor: pointer; background: none;
+  font-family: 'Hanken Grotesk', sans-serif; transition: background .15s;
+}
+.btnView:hover { background: #F0F7F3; }
+
+.btnDelete {
+  font-size: 13px; font-weight: 500; color: #94A299;
+  border: 1px solid #E2E9E5; border-radius: 999px;
+  padding: 7px 14px; cursor: pointer; background: none;
+  font-family: 'Hanken Grotesk', sans-serif; transition: color .15s, border-color .15s;
+}
+.btnDelete:hover { color: #E55A5A; border-color: #E55A5A; }
+
+.itinContent {
+  margin-top: 16px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #5B6B62;
+  border-top: 1px solid #F0F5F2;
+  padding-top: 14px;
+  white-space: pre-wrap;
+}
+
+/* ── FindMyOrder ── */
+.findCard {
+  background: #fff; border: 1px solid #E2E9E5;
+  border-radius: 22px; padding: 36px;
+  max-width: 480px;
+}
+
+.findH2 {
+  font-family: 'Newsreader', serif;
+  font-weight: 500; font-size: 26px; color: #16271E; margin: 0 0 8px;
+}
+
+.findSub { font-size: 14px; color: #5B6B62; margin: 0 0 28px; }
+
+.resultCard {
+  margin-top: 28px; background: #F1F6F3;
+  border: 1px solid #E2E9E5; border-radius: 16px; padding: 22px;
+}
+
+.resultTitle {
+  font-family: 'Newsreader', serif;
+  font-weight: 500; font-size: 20px; color: #16271E; margin: 0 0 14px;
+}
+
+.resultRow {
+  display: flex; justify-content: space-between;
+  font-size: 14px; padding: 9px 0;
+  border-bottom: 1px solid #E2E9E5;
+}
+.resultRow:last-child { border-bottom: none; }
+
+.resultKey { color: #6A7A70; }
+.resultVal { font-weight: 600; color: #16271E; }
+
+/* ── OrderConfirmation ── */
+.confirmCenter { text-align: center; padding: 20px 0 40px; }
+
+.confirmIcon {
+  width: 72px; height: 72px;
+  background: #1E8E5E; color: #fff;
+  border-radius: 50%; font-size: 32px;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 24px;
+}
+
+.confirmH1 {
+  font-family: 'Newsreader', serif;
+  font-weight: 500; font-size: 36px; color: #16271E;
+  letter-spacing: -.02em; margin: 0 0 12px;
+}
+
+.confirmSub { font-size: 17px; color: #5B6B62; margin: 0 0 40px; max-width: 50ch; margin-left: auto; margin-right: auto; }
+
+.confirmCard {
+  background: #fff; border: 1px solid #E2E9E5;
+  border-radius: 20px; padding: 28px;
+  max-width: 480px; margin: 0 auto 24px;
+  text-align: left;
+}
+
+.confirmCardH3 {
+  font-family: 'Newsreader', serif;
+  font-weight: 500; font-size: 20px; color: #16271E; margin: 0 0 18px;
+}
+
+.confirmRow {
+  display: flex; justify-content: space-between;
+  font-size: 14px; padding: 10px 0;
+  border-bottom: 1px solid #F0F5F2;
+}
+.confirmRow:last-child { border-bottom: none; }
+
+.confirmRowKey { color: #6A7A70; }
+.confirmRowVal { font-weight: 600; color: #16271E; }
+
+.confirmBtns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+/* ── TermsAndConditions ── */
+.termsMain {
+  flex: 1; max-width: 760px; margin: 0 auto;
+  padding: 72px 32px 90px; width: 100%;
+}
+
+.termsSection { margin-bottom: 40px; }
+
+.termsH2 {
+  font-family: 'Newsreader', serif;
+  font-weight: 500; font-size: 24px; color: #16271E;
+  margin: 0 0 14px; letter-spacing: -.01em;
+}
+
+.termsPara { font-size: 16px; line-height: 1.75; color: #3A4A41; margin: 0 0 14px; }
+
+.termsList { padding-left: 20px; }
+.termsList li { font-size: 16px; line-height: 1.75; color: #3A4A41; margin-bottom: 8px; }
+
+/* ── LoginSuccess ── */
+.successCenter {
+  text-align: center;
+  padding: 80px 0;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.successIcon {
+  width: 72px; height: 72px;
+  background: #1E8E5E; color: #fff;
+  border-radius: 50%; font-size: 32px;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 24px;
+}
+
+.successH1 {
+  font-family: 'Newsreader', serif;
+  font-weight: 500; font-size: 36px; color: #16271E;
+  letter-spacing: -.02em; margin: 0 0 14px;
+}
+
+.successSub { font-size: 17px; color: #5B6B62; margin: 0 0 36px; }
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  .main { padding: 56px 18px 72px; }
+  .termsMain { padding: 56px 18px 72px; }
+  .findCard { padding: 24px 20px; }
+  .confirmCard { padding: 22px 18px; }
+}

@@ -1,300 +1,248 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { useNavigate, Link } from 'react-router-dom';
+import Footer from '../components/Footer';
 import styles from './CorporateRegister.module.css';
 
-const BACKEND = process.env.REACT_APP_BACKEND_URL;
+const FREE_DOMAINS = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'protonmail.com'];
 
 export default function CorporateRegister() {
   const navigate = useNavigate();
 
-  // Step 1 = company details, Step 2 = admin account
-  const [step, setStep] = useState(1);
-
-  // Company details
-  const [companyName, setCompanyName] = useState('');
-  const [companyCountry, setCompanyCountry] = useState('');
-  const [uen, setUen] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
-
-  // Admin account
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-
-  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState({
+    company_name: '',
+    company_country: '',
+    uen: '',
+    contact_email: '',
+    full_name: '',
+    password: '',
+  });
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
-  // ── Step 1 validation ────────────────────────────────────────
-  function handleCompanyNext(e) {
-    e.preventDefault();
-    setError('');
-    if (!companyName.trim()) return setError('Company name is required.');
-    if (!companyCountry) return setError('Please select a country.');
-    if (!contactEmail.trim()) return setError('Contact email is required.');
-    setStep(2);
+  function update(field, value) {
+    setForm((prev) => ({ ...prev, [field]: value }));
   }
 
-  // ── Step 2: register Supabase user then call backend ─────────
+  function passwordStrength() {
+    const p = form.password;
+    if (!p) return null;
+    if (p.length < 6) return 'weak';
+    if (p.length < 10 || !/[A-Z]/.test(p) || !/[0-9]/.test(p)) return 'fair';
+    return 'strong';
+  }
+
+  const strength = passwordStrength();
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
-    if (password !== confirmPassword) return setError('Passwords do not match.');
-    if (password.length < 8) return setError('Password must be at least 8 characters.');
+
+    // Validate no free email domains
+    const domain = form.contact_email.split('@')[1]?.toLowerCase();
+    if (FREE_DOMAINS.includes(domain)) {
+      setError('Please use a work email address. Free email providers are not accepted for corporate accounts.');
+      return;
+    }
+
+    if (form.password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
 
     setLoading(true);
     try {
-      // 1. Register with Supabase Auth
-      const { data: authData, error: authErr } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { full_name: fullName } },
-      });
-      if (authErr) throw authErr;
-
-      const userId = authData?.user?.id;
-      if (!userId) throw new Error('User creation failed — please try again.');
-
-      // 2. Call backend to create corporate record + upgrade profile
-      const res = await fetch(`${BACKEND}/corporate/register`, {
+      const backend = process.env.REACT_APP_BACKEND_URL;
+      const res = await fetch(`${backend}/corporate/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_name: companyName.trim(),
-          company_country: companyCountry,
-          uen: uen.trim() || null,
-          contact_email: contactEmail.trim(),
-          user_id: userId,
-          full_name: fullName.trim(),
-        }),
+        body: JSON.stringify(form),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Registration failed');
-
-      navigate('/corporate/dashboard', { state: { corp_id: data.corp_id } });
+      if (!res.ok) throw new Error(data.error || 'Registration failed.');
+      setSubmitted(true);
     } catch (err) {
       setError(err.message);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
+  }
+
+  if (submitted) {
+    return (
+      <div className={styles.page}>
+        <main className={styles.main}>
+          <div className={styles.successWrap}>
+            <div className={styles.successIcon}>✓</div>
+            <h1 className={styles.successH1}>Application submitted.</h1>
+            <p className={styles.successSub}>
+              Your corporate account application is under review. We'll email <strong>{form.contact_email}</strong> within 1–2 business days.
+            </p>
+            <button className={styles.btnPrimary} onClick={() => navigate('/')}>
+              Back to Juzgo →
+            </button>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
   }
 
   return (
     <div className={styles.page}>
-      <div className={styles.card}>
-        {/* Header */}
+      <main className={styles.main}>
+
         <div className={styles.header}>
-          <div className={styles.logoMark}>
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <rect width="32" height="32" rx="8" fill="#0f172a"/>
-              <path d="M8 16 C8 11.6 11.6 8 16 8 C20.4 8 24 11.6 24 16" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round"/>
-              <path d="M12 16 C12 13.8 13.8 12 16 12 C18.2 12 20 13.8 20 16" stroke="#7dd3fc" strokeWidth="2" strokeLinecap="round"/>
-              <circle cx="16" cy="16" r="2" fill="#38bdf8"/>
-            </svg>
-          </div>
-          <h1 className={styles.title}>Corporate Account</h1>
-          <p className={styles.subtitle}>Set up your company's eSIM portal</p>
+          <div className={styles.eyebrow}>Business</div>
+          <h1 className={styles.h1}>Corporate Account</h1>
+          <p className={styles.sub}>
+            Manage eSIM plans for your entire team. Shared wallet, centralised billing, and volume discounts.
+          </p>
         </div>
 
-        {/* Progress */}
-        <div className={styles.progress}>
-          <div className={`${styles.progressStep} ${step >= 1 ? styles.active : ''}`}>
-            <span className={styles.stepNum}>1</span>
-            <span className={styles.stepLabel}>Company</span>
-          </div>
-          <div className={styles.progressLine}/>
-          <div className={`${styles.progressStep} ${step >= 2 ? styles.active : ''}`}>
-            <span className={styles.stepNum}>2</span>
-            <span className={styles.stepLabel}>Admin Account</span>
-          </div>
-        </div>
+        <div className={styles.layout}>
 
-        {error && <div className={styles.errorBanner}>{error}</div>}
+          {/* Form card */}
+          <div className={styles.formCard}>
+            <h2 className={styles.formH2}>Register your company</h2>
+            <p className={styles.formNote}>All corporate applications are reviewed by our team before activation.</p>
 
-        {/* ── Step 1: Company ─────────────────────────────────── */}
-        {step === 1 && (
-          <form onSubmit={handleCompanyNext} className={styles.form}>
-            <div className={styles.field}>
-              <label className={styles.label}>Company Name *</label>
-              <input
-                className={styles.input}
-                type="text"
-                placeholder="Acme Pte Ltd"
-                value={companyName}
-                onChange={e => setCompanyName(e.target.value)}
-                required
-              />
-            </div>
+            <form onSubmit={handleSubmit} className={styles.form}>
 
-            <div className={styles.field}>
-              <label className={styles.label}>Country *</label>
-              <select
-                className={styles.input}
-                value={companyCountry}
-                onChange={e => setCompanyCountry(e.target.value)}
-                required
-              >
-                <option value="">Select country…</option>
-                <option value="Singapore">Singapore</option>
-                <option value="Malaysia">Malaysia</option>
-                <option value="Indonesia">Indonesia</option>
-                <option value="Thailand">Thailand</option>
-                <option value="Philippines">Philippines</option>
-                <option value="Vietnam">Vietnam</option>
-                <option value="Hong Kong">Hong Kong</option>
-                <option value="Japan">Japan</option>
-                <option value="South Korea">South Korea</option>
-                <option value="China">China</option>
-                <option value="India">India</option>
-                <option value="Australia">Australia</option>
-                <option value="New Zealand">New Zealand</option>
-                <option value="United Kingdom">United Kingdom</option>
-                <option value="United States">United States</option>
-                <option value="Canada">Canada</option>
-                <option value="Germany">Germany</option>
-                <option value="France">France</option>
-                <option value="Netherlands">Netherlands</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
+              <div className={styles.section}>
+                <div className={styles.sectionLabel}>Company details</div>
 
-            <div className={styles.field}>
-              <label className={styles.label}>
-                UEN <span className={styles.optional}>(optional)</span>
-              </label>
-              <input
-                className={styles.input}
-                type="text"
-                placeholder="e.g. 202312345A"
-                value={uen}
-                onChange={e => setUen(e.target.value)}
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Contact Email *</label>
-              <input
-                className={styles.input}
-                type="email"
-                placeholder="accounts@company.com"
-                value={contactEmail}
-                onChange={e => setContactEmail(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className={styles.infoBox}>
-              <span className={styles.infoIcon}>ℹ</span>
-              <p>
-                You'll create the <strong>admin account</strong> in the next step.
-                Staff are invited separately from the dashboard.
-              </p>
-            </div>
-
-            <button type="submit" className={styles.primaryBtn}>
-              Continue →
-            </button>
-
-            <p className={styles.loginLink}>
-              Already have an account?{' '}
-              <span className={styles.link} onClick={() => navigate('/login')}>Sign in</span>
-            </p>
-          </form>
-        )}
-
-        {/* ── Step 2: Admin Account ────────────────────────────── */}
-        {step === 2 && (
-          <form onSubmit={handleSubmit} className={styles.form}>
-            <div className={styles.companyPill}>
-              <span className={styles.pillIcon}>🏢</span>
-              {companyName}
-              <button
-                type="button"
-                className={styles.pillEdit}
-                onClick={() => setStep(1)}
-              >
-                Edit
-              </button>
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Your Full Name</label>
-              <input
-                className={styles.input}
-                type="text"
-                placeholder="Jane Tan"
-                value={fullName}
-                onChange={e => setFullName(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Work Email *</label>
-              <input
-                className={styles.input}
-                type="email"
-                placeholder="jane@company.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className={styles.fieldRow}>
-              <div className={styles.field}>
-                <label className={styles.label}>Password *</label>
+                <label className={styles.label}>Company name</label>
                 <input
+                  type="text"
+                  placeholder="Acme Pte. Ltd."
+                  value={form.company_name}
+                  onChange={(e) => update('company_name', e.target.value)}
                   className={styles.input}
-                  type="password"
-                  placeholder="Min. 8 characters"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
                   required
                 />
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>Confirm Password *</label>
-                <input
-                  className={styles.input}
-                  type="password"
-                  placeholder="Repeat password"
-                  value={confirmPassword}
-                  onChange={e => setConfirmPassword(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
 
-            <div className={styles.benefitsGrid}>
-              {[
-                ['💳', 'One corporate wallet', 'Top up once, staff spend freely'],
-                ['📧', 'Email invitations', 'Onboard staff in seconds'],
-                ['📊', 'Full order history', 'Export monthly statements'],
-              ].map(([icon, title, desc]) => (
-                <div key={title} className={styles.benefitCard}>
-                  <span className={styles.benefitIcon}>{icon}</span>
-                  <strong>{title}</strong>
-                  <span>{desc}</span>
+                <div className={styles.twoCol}>
+                  <div>
+                    <label className={styles.label}>Country of registration</label>
+                    <input
+                      type="text"
+                      placeholder="Singapore"
+                      value={form.company_country}
+                      onChange={(e) => update('company_country', e.target.value)}
+                      className={styles.input}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className={styles.label}>UEN / Reg. number <span className={styles.optional}>(optional)</span></label>
+                    <input
+                      type="text"
+                      placeholder="202300001A"
+                      value={form.uen}
+                      onChange={(e) => update('uen', e.target.value)}
+                      className={styles.input}
+                    />
+                  </div>
                 </div>
-              ))}
+              </div>
+
+              <div className={styles.section}>
+                <div className={styles.sectionLabel}>Admin account</div>
+
+                <label className={styles.label}>Your full name</label>
+                <input
+                  type="text"
+                  placeholder="John Smith"
+                  value={form.full_name}
+                  onChange={(e) => update('full_name', e.target.value)}
+                  className={styles.input}
+                  required
+                />
+
+                <label className={styles.label}>Work email</label>
+                <input
+                  type="email"
+                  placeholder="john@acmecorp.com"
+                  value={form.contact_email}
+                  onChange={(e) => update('contact_email', e.target.value)}
+                  className={styles.input}
+                  required
+                />
+
+                <label className={styles.label}>Password</label>
+                <input
+                  type="password"
+                  placeholder="••••••••"
+                  value={form.password}
+                  onChange={(e) => update('password', e.target.value)}
+                  className={styles.input}
+                  required
+                />
+                {strength && (
+                  <div className={styles.strengthWrap}>
+                    <div className={`${styles.strengthBar} ${styles[`strength_${strength}`]}`} />
+                    <span className={styles.strengthText}>{strength.charAt(0).toUpperCase() + strength.slice(1)}</span>
+                  </div>
+                )}
+              </div>
+
+              {error && <div className={styles.error}>{error}</div>}
+
+              <button type="submit" className={styles.btnSubmit} disabled={loading}>
+                {loading ? 'Submitting application…' : 'Submit application →'}
+              </button>
+
+              <p className={styles.loginNote}>
+                Already have an account? <Link to="/login" className={styles.loginLink}>Log in</Link>
+              </p>
+            </form>
+          </div>
+
+          {/* Info panel */}
+          <div className={styles.infoPanel}>
+            <h2 className={styles.infoPanelH2}>
+              Built for<br /><em className={styles.infoPanelEm}>teams on the move.</em>
+            </h2>
+
+            <ul className={styles.featureList}>
+              <li className={styles.featureItem}>
+                <span className={styles.check}>✓</span>
+                <div>
+                  <div className={styles.featureTitle}>Shared corporate wallet</div>
+                  <div className={styles.featureDesc}>Top up once, your whole team draws from it.</div>
+                </div>
+              </li>
+              <li className={styles.featureItem}>
+                <span className={styles.check}>✓</span>
+                <div>
+                  <div className={styles.featureTitle}>Invite team members</div>
+                  <div className={styles.featureDesc}>Send email invites, set roles as admin or member.</div>
+                </div>
+              </li>
+              <li className={styles.featureItem}>
+                <span className={styles.check}>✓</span>
+                <div>
+                  <div className={styles.featureTitle}>Centralised billing</div>
+                  <div className={styles.featureDesc}>One invoice, full purchase history for your finance team.</div>
+                </div>
+              </li>
+              <li className={styles.featureItem}>
+                <span className={styles.check}>✓</span>
+                <div>
+                  <div className={styles.featureTitle}>Volume discounts</div>
+                  <div className={styles.featureDesc}>Better rates as your team's usage grows.</div>
+                </div>
+              </li>
+            </ul>
+
+            <div className={styles.contactNote}>
+              Questions? Email us at{' '}
+              <a href="mailto:hello@juzgo.world" className={styles.contactLink}>hello@juzgo.world</a>
             </div>
-
-            <button type="submit" className={styles.primaryBtn} disabled={loading}>
-              {loading ? 'Creating account…' : 'Create Corporate Account'}
-            </button>
-
-            <button
-              type="button"
-              className={styles.backBtn}
-              onClick={() => setStep(1)}
-            >
-              ← Back
-            </button>
-          </form>
-        )}
-      </div>
+          </div>
+        </div>
+      </main>
+      <Footer />
     </div>
   );
 }

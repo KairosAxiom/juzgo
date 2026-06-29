@@ -1,127 +1,79 @@
-/* src/components/LanguageToggle.module.css */
+/* LanguageToggle.module.css — Juzgo refresh */
 
-.wrapper {
+.wrap {
   position: relative;
-  display: flex;
-  align-items: center;
+  flex-shrink: 0;
 }
 
-/* ── Trigger button ── */
 .trigger {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  gap: 6px;
+  background: #F1F6F3;
+  border: 1px solid #E2E9E5;
+  border-radius: 999px;
+  padding: 8px 14px;
   cursor: pointer;
-  color: #e0e8f0;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1;
-  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-  white-space: nowrap;
-  letter-spacing: 0.02em;
-}
-
-.trigger:hover {
-  background: rgba(56, 182, 255, 0.12);
-  border-color: rgba(56, 182, 255, 0.35);
-  box-shadow: 0 0 8px rgba(56, 182, 255, 0.15);
-}
-
-/* ── Flag emoji ── */
-.flag {
-  font-size: 15px;
-  line-height: 1;
-}
-
-/* ── Active language label ── */
-.label {
+  font-family: 'Hanken Grotesk', sans-serif;
   font-size: 13px;
   font-weight: 600;
-  color: #e0e8f0;
-  min-width: 28px;
-  text-align: center;
+  color: #3A4A41;
+  transition: border-color .15s;
+  white-space: nowrap;
 }
+.trigger:hover { border-color: #1E8E5E; }
 
-/* ── Chevron ── */
-.chevron {
+.globe { font-size: 14px; line-height: 1; }
+
+.label { font-size: 13px; }
+
+.caret {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.45);
-  transition: transform 0.2s ease;
+  color: #94A299;
+  transition: transform .18s;
   display: inline-block;
 }
+.caretOpen { transform: rotate(180deg); }
 
-.chevronOpen {
-  transform: rotate(180deg);
-}
-
-/* ── Dropdown ── */
+/* Dropdown */
 .dropdown {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  min-width: 130px;
-  background: #0d1525;
-  border: 1px solid rgba(56, 182, 255, 0.2);
-  border-radius: 10px;
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(56, 182, 255, 0.05);
-  overflow: hidden;
-  list-style: none;
-  margin: 0;
-  padding: 4px;
-  z-index: 9999;
-
-  /* entrance animation */
-  animation: dropIn 0.16s ease forwards;
+  min-width: 160px;
+  background: #fff;
+  border: 1px solid #E2E9E5;
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: 0 12px 32px -8px rgba(22,39,30,.16);
+  z-index: 200;
 }
 
-@keyframes dropIn {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* ── Dropdown option ── */
 .option {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 7px;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
   cursor: pointer;
-  color: #a0b4c8;
-  font-size: 13px;
-  font-weight: 500;
-  transition: background 0.14s ease, color 0.14s ease;
-  letter-spacing: 0.01em;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: background .12s;
+  text-align: left;
 }
-
-.option:hover {
-  background: rgba(56, 182, 255, 0.1);
-  color: #e0e8f0;
-}
-
-/* ── Active / selected option ── */
-.active {
-  background: rgba(56, 182, 255, 0.15);
-  color: #38b6ff;
-}
-
-.active:hover {
-  background: rgba(56, 182, 255, 0.2);
-  color: #38b6ff;
-}
+.option:hover { background: #F1F6F3; }
+.optionActive { background: #F0F7F3; }
 
 .optionLabel {
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
+  color: #16271E;
+}
+
+.optionName {
+  font-size: 12px;
+  color: #6A7A70;
 }

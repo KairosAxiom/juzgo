@@ -1,137 +1,131 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import Navbar from '../components/Navbar';
+import { useLang, t } from '../lib/i18n';
 import styles from './Auth.module.css';
-import { useLang } from '../lib/i18n';
 
 export default function Register() {
-  const { t } = useLang();
-  const navigate = useNavigate();
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [agreedToTerms, setAgreedToTerms] = React.useState(false);
-  const [name, setName] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+  const { lang } = useLang();
 
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: name } }
-    });
-
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-    } else if (data?.user?.identities?.length === 0) {
-      setError('An account with this email already exists. Please sign in or check your inbox.');
-      setLoading(false);
-    } else {
-      setConfirmed(true);
-      setLoading(false);
-    }
+  const passwordStrength = () => {
+    if (password.length === 0) return null;
+    if (password.length < 6) return 'weak';
+    if (password.length < 10 || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) return 'fair';
+    return 'strong';
   };
 
-  if (confirmed) {
-    return (
-      <div className={styles.page}>
-        <Navbar />
-        <main className={styles.main}>
-          <div className={styles.card}>
-            <div className={styles.cardHead}>
-              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📧</div>
-              <h1 className={styles.title}>Check your email</h1>
-              <p className={styles.sub}>
-                We sent a confirmation link to <strong>{email}</strong>.<br />
-                Click it to activate your account, then sign in.
-              </p>
-            </div>
-            <button
-              className={styles.submitBtn}
-              style={{ marginTop: '24px' }}
-              onClick={() => navigate('/login')}
-            >
-              {t('auth_login')} →
-            </button>
-            <p className={styles.switchText} style={{ marginTop: '16px' }}>
-              Didn't receive it? Check your spam folder or{' '}
-              <span
-                style={{ color: 'var(--accent)', cursor: 'pointer' }}
-                onClick={() => setConfirmed(false)}
-              >
-                try again
-              </span>
-            </p>
-          </div>
-        </main>
-      </div>
-    );
+  const strength = passwordStrength();
+
+  async function handleRegister(e) {
+    e.preventDefault();
+    setError('');
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    setLoading(true);
+    const { error: err } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name: fullName, phone } },
+    });
+    setLoading(false);
+    if (err) { setError(err.message); return; }
+    navigate('/login-success');
   }
 
   return (
     <div className={styles.page}>
-      <Navbar />
-      <main className={styles.main}>
-        <div className={styles.card}>
-          <div className={styles.cardHead}>
-            <h1 className={styles.title}>{t('auth_register')}</h1>
-            <p className={styles.sub}>Join eSIM Connect — travel smarter</p>
+      <div className={styles.card}>
+
+        {/* Left panel */}
+        <div className={styles.brandPanel}>
+          <div className={styles.brandLogo}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.4">
+              <circle cx="12" cy="12" r="9.5" />
+              <ellipse cx="12" cy="12" rx="4" ry="9.5" />
+              <line x1="2.5" y1="12" x2="21.5" y2="12" />
+            </svg>
+            <span className={styles.brandName}>Juzgo</span>
           </div>
-          {error && <div className={styles.error}>{error}</div>}
+          <blockquote className={styles.brandQuote}>
+            "Five free itinerary searches when you join."
+          </blockquote>
+          <div className={styles.brandTag}>Juzgo · new members</div>
+        </div>
+
+        {/* Right panel — form */}
+        <div className={styles.formPanel}>
+          <div className={styles.tabs}>
+            <Link to="/login" className={styles.tab}>Log in</Link>
+            <span className={`${styles.tab} ${styles.tabActive}`}>Register</span>
+          </div>
+
+          <h2 className={styles.formH2}>Create your account.</h2>
+          <p className={styles.formSub}>Start exploring 190+ destinations today.</p>
+
           <form onSubmit={handleRegister} className={styles.form}>
-            <div className={styles.field}>
-              <label>{t('auth_name')}</label>
-              <input
-                type="text"
-                placeholder="David Lim"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                required
-              />
-            </div>
-            <div className={styles.field}>
-              <label>{t('auth_email')}</label>
-              <input
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            <div className={styles.field}>
-              <label>{t('auth_password')}</label>
-              <input
-                type="password"
-                placeholder="Min. 8 characters"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                minLength={8}
-                required
-              />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', margin: '8px 0' }}>
-              <input type='checkbox' id='terms' checked={agreedToTerms} onChange={e => setAgreedToTerms(e.target.checked)} style={{ marginTop: '3px', accentColor: 'var(--accent)', width: '16px', height: '16px', flexShrink: 0, cursor: 'pointer' }} />
-              <label htmlFor='terms' style={{ fontSize: '13px', color: 'var(--muted)', cursor: 'pointer', lineHeight: '1.5' }}>
-                I agree to the <a href='/terms' target='_blank' rel='noopener noreferrer' style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}>Terms and Conditions</a>
-              </label>
-            </div>
-            <button type="submit" className={styles.submitBtn} disabled={loading || !agreedToTerms} style={{ opacity: agreedToTerms ? 1 : 0.5 }}>
-              {loading ? <span className={styles.spinner}></span> : `${t('auth_register')} →`}
+            <label className={styles.label}>Full name</label>
+            <input
+              type="text"
+              placeholder="John Smith"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              className={styles.input}
+              required
+            />
+
+            <label className={styles.label}>Email</label>
+            <input
+              type="email"
+              placeholder="your@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={styles.input}
+              required
+            />
+
+            <label className={styles.label}>Phone <span className={styles.optional}>(optional)</span></label>
+            <input
+              type="tel"
+              placeholder="+65 9000 0000"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className={styles.input}
+            />
+
+            <label className={styles.label}>Password</label>
+            <input
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={styles.input}
+              required
+            />
+            {strength && (
+              <div className={styles.strengthWrap}>
+                <div className={`${styles.strengthBar} ${styles[`strength_${strength}`]}`} />
+                <span className={styles.strengthText}>{strength.charAt(0).toUpperCase() + strength.slice(1)}</span>
+              </div>
+            )}
+
+            {error && <div className={styles.error}>{error}</div>}
+
+            <button type="submit" className={styles.btnPrimary} disabled={loading}>
+              {loading ? 'Creating account…' : 'Create account →'}
             </button>
           </form>
+
           <p className={styles.switchText}>
-            {t('auth_have_account')} <Link to="/login">{t('auth_login')}</Link>
+            Already have an account? <Link to="/login" className={styles.switchLink}>Log in</Link>
           </p>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

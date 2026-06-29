@@ -1,243 +1,137 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useLang } from '../lib/i18n';
+import { useLang, t } from '../lib/i18n';
 import LanguageToggle from './LanguageToggle';
 import styles from './Navbar.module.css';
 
-const ADMIN_EMAIL = process.env.REACT_APP_ADMIN_EMAIL;
-
 export default function Navbar() {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [plansOpen, setPlansOpen] = useState(false);
   const [user, setUser] = useState(null);
-  const [isCorpAdmin, setIsCorpAdmin] = useState(false);
-  const location = useLocation();
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const navigate = useNavigate();
-  const { t } = useLang();
+  const location = useLocation();
+  const { lang } = useLang();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) checkCorpAdmin(session.user.id);
+      if (session?.user) checkAdmin(session.user.email);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) checkCorpAdmin(session.user.id);
-      else setIsCorpAdmin(false);
+      if (session?.user) checkAdmin(session.user.email);
+      else setIsAdmin(false);
     });
-    return () => subscription.unsubscribe();
+    return () => listener.subscription.unsubscribe();
   }, []);
 
-  async function checkCorpAdmin(userId) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('is_corporate, corp_role')
-      .eq('id', userId)
-      .single();
-    setIsCorpAdmin(profile?.is_corporate && profile?.corp_role === 'admin');
+  async function checkAdmin(email) {
+    const adminEmail = process.env.REACT_APP_ADMIN_EMAIL;
+    setIsAdmin(email === adminEmail);
   }
 
-  const handleSignOut = async () => {
+  async function handleLogout() {
     await supabase.auth.signOut();
-    setMenuOpen(false);
     navigate('/');
-  };
+  }
 
-  const isActive = (path) => location.pathname === path ? styles.ctaBtn : '';
-  const isAdmin = user?.email === ADMIN_EMAIL;
-
-  const PlansDropdown = () => (
-    <div style={{ position: 'relative' }}
-      onMouseEnter={() => setPlansOpen(true)}
-      onMouseLeave={() => setTimeout(() => setPlansOpen(false), 150)}
-    >
-      <Link to="/plans" className={isActive('/plans')} onClick={() => setMenuOpen(false)}
-        style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-        {t('nav_plans')} <span style={{ fontSize: '10px', opacity: 0.6 }}>▾</span>
-      </Link>
-      {plansOpen && (
-        <div style={{
-          position: 'absolute', top: '100%', left: '0', background: '#0d1117',
-          border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px',
-          padding: '8px', minWidth: '180px', zIndex: 1000,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-        }}>
-          <Link to="/plans" onClick={() => { setMenuOpen(false); setPlansOpen(false); }} style={{
-            display: 'block', padding: '10px 14px', borderRadius: '8px',
-            color: 'inherit', textDecoration: 'none', fontSize: '14px', fontWeight: 600,
-          }}>📶 {t('nav_plans')}</Link>
-          <Link to="/find-order" onClick={() => { setMenuOpen(false); setPlansOpen(false); }} style={{
-            display: 'block', padding: '10px 14px', borderRadius: '8px',
-            color: 'inherit', textDecoration: 'none', fontSize: '14px', fontWeight: 600,
-          }}>🔍 {t('find_title')}</Link>
-        </div>
-      )}
-    </div>
-  );
+  const isActive = (path) => location.pathname === path;
 
   return (
     <nav className={styles.nav}>
       <div className={styles.inner}>
-
         {/* Logo */}
-        <Link to="/" className={styles.logo} onClick={() => setMenuOpen(false)} style={{ overflow: 'visible' }}>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 96" role="img"
-            style={{ height: '88px', width: 'auto', display: 'block', filter: 'drop-shadow(0 4px 14px rgba(26,106,255,0.5))' }}>
-            <defs>
-              <radialGradient id="nb_gG" cx="38%" cy="32%" r="62%">
-                <stop offset="0%" stopColor="#1a4a8a"/>
-                <stop offset="45%" stopColor="#0a2255"/>
-                <stop offset="100%" stopColor="#040e28"/>
-              </radialGradient>
-              <radialGradient id="nb_haloG" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#1a6aff" stopOpacity="0.22"/>
-                <stop offset="100%" stopColor="#1a6aff" stopOpacity="0"/>
-              </radialGradient>
-              <linearGradient id="nb_wG" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#ffffff"/>
-                <stop offset="50%" stopColor="#a8d8ff"/>
-                <stop offset="100%" stopColor="#5aaeff"/>
-              </linearGradient>
-              <clipPath id="nb_gc">
-                <circle cx="48" cy="48" r="38"/>
-              </clipPath>
-              <style>{`
-                @keyframes nb_orbit5G {
-                  from { transform: rotate(0deg) translateX(44px) rotate(0deg); }
-                  to   { transform: rotate(360deg) translateX(44px) rotate(-360deg); }
-                }
-                .nb_5g_icon {
-                  animation: nb_orbit5G 6s linear infinite;
-                  transform-origin: 48px 48px;
-                  transform-box: view-box;
-                }
-              `}</style>
-            </defs>
-
-            {/* Globe halo + body */}
-            <circle cx="48" cy="48" r="46" fill="url(#nb_haloG)"/>
-            <circle cx="48" cy="48" r="38" fill="url(#nb_gG)" stroke="#3a8aff" strokeWidth="1.5"/>
-            <g clipPath="url(#nb_gc)">
-              <ellipse cx="48" cy="48" rx="38" ry="38" fill="none" stroke="#1a6aff" strokeWidth="0.5" strokeOpacity="0.45"/>
-              <ellipse cx="48" cy="48" rx="23" ry="38" fill="none" stroke="#1a6aff" strokeWidth="0.5" strokeOpacity="0.4"/>
-              <ellipse cx="48" cy="48" rx="10" ry="38" fill="none" stroke="#1a6aff" strokeWidth="0.5" strokeOpacity="0.4"/>
-              <ellipse cx="48" cy="48" rx="38" ry="4"  fill="none" stroke="#1a6aff" strokeWidth="0.6" strokeOpacity="0.55"/>
-              <ellipse cx="48" cy="37" rx="34" ry="3.5" fill="none" stroke="#1a6aff" strokeWidth="0.5" strokeOpacity="0.4"/>
-              <ellipse cx="48" cy="59" rx="34" ry="3.5" fill="none" stroke="#1a6aff" strokeWidth="0.5" strokeOpacity="0.4"/>
-            </g>
-
-            {/* Globe text */}
-            <text x="48" y="46" fontFamily="Arial, Helvetica, sans-serif" fontSize="12" fontWeight="700"
-              fill="url(#nb_wG)" textAnchor="middle" letterSpacing="-0.3">
-              <tspan fontWeight="300">e</tspan>Sim<tspan fontWeight="300">connect</tspan>
-            </text>
-            <text x="48" y="57" fontFamily="Arial, Helvetica, sans-serif" fontSize="4.5"
-              fill="#60b0ff" textAnchor="middle" letterSpacing="1.5">150+ COUNTRIES</text>
-
-            {/* Orbit track */}
-            <circle cx="48" cy="48" r="44" fill="none" stroke="#1a6aff" strokeWidth="0.5" strokeOpacity="0.2" strokeDasharray="3 4"/>
-
-            {/* Single unboxed 5G text orbiting clockwise */}
-            <g className="nb_5g_icon">
-              <text x="48" y="51" fontFamily="Arial, Helvetica, sans-serif" fontSize="9" fontWeight="900"
-                fill="#00c8ff" textAnchor="middle" letterSpacing="0.5"
-                style={{ textShadow: '0 0 6px rgba(0,200,255,0.8)' }}>5G</text>
-            </g>
-
-            {/* Brand name */}
-            <text x="104" y="55" fontFamily="Arial, Helvetica, sans-serif" fontSize="24" fontWeight="700"
-              fill="#ffffff" letterSpacing="-0.5">
-              <tspan fontWeight="300" fill="#00c8ff">e</tspan>SIM<tspan fontWeight="300" fill="#00c8ff">connect</tspan>
-            </text>
+        <Link to="/" className={styles.logo} onClick={() => setMenuOpen(false)}>
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#2A6FDB" strokeWidth="1.4">
+            <circle cx="12" cy="12" r="9.5" />
+            <ellipse cx="12" cy="12" rx="4" ry="9.5" />
+            <line x1="2.5" y1="12" x2="21.5" y2="12" />
           </svg>
+          <span className={styles.logoText}>Juzgo</span>
         </Link>
 
-        {/* Nav links */}
-        <div className={`${styles.links} ${menuOpen ? styles.open : ''}`}>
+        {/* Desktop links */}
+        <div className={styles.links}>
+          <Link to="/itinerary" className={`${styles.link} ${isActive('/itinerary') ? styles.linkActive : ''}`}>
+            {t('nav_itinerary', lang)}
+          </Link>
+          <Link to="/plans" className={`${styles.link} ${isActive('/plans') ? styles.linkActive : ''}`}>
+            {t('nav_plans', lang)}
+          </Link>
+          <Link to="/terms" className={`${styles.link} ${isActive('/terms') ? styles.linkActive : ''}`}>
+            {t('nav_terms', lang)}
+          </Link>
+
           {user ? (
             <>
-              <Link to="/itinerary" className={isActive('/itinerary')} onClick={() => setMenuOpen(false)}>
-                {t('nav_itinerary')}
+              <Link to="/dashboard" className={`${styles.link} ${isActive('/dashboard') ? styles.linkActive : ''}`}>
+                {t('nav_dashboard', lang)}
               </Link>
-              <PlansDropdown />
-              <Link to="/dashboard" className={isActive('/dashboard')} onClick={() => setMenuOpen(false)}>
-                {t('nav_dashboard')}
+              <Link to="/purchases" className={`${styles.link} ${isActive('/purchases') ? styles.linkActive : ''}`}>
+                {t('nav_purchases', lang)}
               </Link>
-              <Link to="/purchases" className={isActive('/purchases')} onClick={() => setMenuOpen(false)}>
-                {t('nav_purchases')}
+              <Link to="/saved-itineraries" className={`${styles.link} ${isActive('/saved-itineraries') ? styles.linkActive : ''}`}>
+                {t('nav_saved', lang)}
               </Link>
-              <Link to="/saved-itineraries" className={isActive('/saved-itineraries')} onClick={() => setMenuOpen(false)}>
-                Saved Trips
-              </Link>
-              <Link to="/terms" className={isActive('/terms')} onClick={() => setMenuOpen(false)}>
-                T&C
-              </Link>
-              {/* Corp Portal link — only visible to corporate admins */}
-              {isCorpAdmin && (
-                <Link
-                  to="/corporate/dashboard"
-                  className={isActive('/corporate/dashboard')}
-                  onClick={() => setMenuOpen(false)}
-                  style={{
-                    color: '#38bdf8',
-                    fontWeight: 700,
-                    border: '1px solid rgba(56,189,248,0.3)',
-                    borderRadius: '8px',
-                    padding: '4px 10px',
-                    fontSize: '13px',
-                  }}
-                >
-                  🏢 Corp Portal
-                </Link>
-              )}
-              {/* Admin link — only visible to admin account */}
               {isAdmin && (
-                <Link
-                  to="/admin"
-                  className={isActive('/admin')}
-                  onClick={() => setMenuOpen(false)}
-                  style={{
-                    color: '#00c8c8',
-                    fontWeight: 700,
-                    border: '1px solid rgba(0,200,200,0.3)',
-                    borderRadius: '8px',
-                    padding: '4px 10px',
-                    fontSize: '13px',
-                  }}
-                >
+                <Link to="/admin" className={`${styles.link} ${styles.linkAdmin} ${isActive('/admin') ? styles.linkActive : ''}`}>
                   ⚙️ Admin
                 </Link>
               )}
-              <button className={styles.signOutBtn} onClick={handleSignOut}>
-                {t('nav_logout')}
+              <button onClick={handleLogout} className={styles.btnOutline}>
+                {t('nav_logout', lang)}
               </button>
             </>
           ) : (
             <>
-              <Link to="/itinerary" className={isActive('/itinerary')} onClick={() => setMenuOpen(false)}>
-                {t('nav_itinerary')}
+              <Link to="/register" className={styles.btnPrimary}>
+                {t('nav_register', lang)}
               </Link>
-              <PlansDropdown />
-              <Link to="/terms" className={isActive('/terms')} onClick={() => setMenuOpen(false)}>
-                T&C
-              </Link>
-              <Link to="/register" className={styles.ctaBtn} onClick={() => setMenuOpen(false)}>
-                {t('nav_register')}
-              </Link>
-              <Link to="/login" className={styles.loginBtn} onClick={() => setMenuOpen(false)}>
-                {t('nav_login')}
+              <Link to="/login" className={styles.btnGhost}>
+                {t('nav_login', lang)}
               </Link>
             </>
           )}
+
           <LanguageToggle />
         </div>
 
-        <button className={styles.hamburger} onClick={() => setMenuOpen(!menuOpen)}>
-          <span></span><span></span><span></span>
+        {/* Mobile hamburger */}
+        <button
+          className={styles.hamburger}
+          onClick={() => setMenuOpen((o) => !o)}
+          aria-label="Toggle menu"
+        >
+          <span className={`${styles.bar} ${menuOpen ? styles.barOpen1 : ''}`} />
+          <span className={`${styles.bar} ${menuOpen ? styles.barOpen2 : ''}`} />
+          <span className={`${styles.bar} ${menuOpen ? styles.barOpen3 : ''}`} />
         </button>
-
       </div>
+
+      {/* Mobile drawer */}
+      {menuOpen && (
+        <div className={styles.drawer}>
+          <Link to="/itinerary" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_itinerary', lang)}</Link>
+          <Link to="/plans" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_plans', lang)}</Link>
+          <Link to="/terms" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_terms', lang)}</Link>
+          {user ? (
+            <>
+              <Link to="/dashboard" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_dashboard', lang)}</Link>
+              <Link to="/purchases" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_purchases', lang)}</Link>
+              <Link to="/saved-itineraries" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_saved', lang)}</Link>
+              {isAdmin && <Link to="/admin" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>⚙️ Admin</Link>}
+              <button onClick={() => { handleLogout(); setMenuOpen(false); }} className={styles.drawerBtn}>{t('nav_logout', lang)}</button>
+            </>
+          ) : (
+            <>
+              <Link to="/register" className={`${styles.drawerLink} ${styles.drawerLinkGreen}`} onClick={() => setMenuOpen(false)}>{t('nav_register', lang)}</Link>
+              <Link to="/login" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_login', lang)}</Link>
+            </>
+          )}
+          <div className={styles.drawerLang}><LanguageToggle /></div>
+        </div>
+      )}
     </nav>
   );
 }

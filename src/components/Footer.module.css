@@ -1,0 +1,122 @@
+/* Footer.module.css — Juzgo refresh */
+
+.footer {
+  background: #F1F6F3;
+  color: #16271E;
+  font-family: 'Hanken Grotesk', sans-serif;
+  border-top: 1px solid #E2E9E5;
+  margin-top: auto;
+}
+
+.inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 64px 32px 40px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: 40px;
+}
+
+/* Brand */
+.brand {}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.logoText {
+  font-family: 'Outfit', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -.03em;
+  color: #2A6FDB;
+  line-height: 1;
+}
+
+.tagline {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #5B6B62;
+  max-width: 34ch;
+}
+
+/* Columns */
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.colHeading {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: #2A6FDB;
+  margin-bottom: 18px;
+}
+
+.colLink {
+  font-size: 15px;
+  color: #3A4A41;
+  text-decoration: none;
+  cursor: pointer;
+  margin-bottom: 12px;
+  transition: color .15s;
+  display: block;
+}
+.colLink:hover { color: #1E8E5E; }
+
+/* Bottom bar */
+.bottom {
+  border-top: 1px solid #E2E9E5;
+  margin-top: 48px;
+  padding-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.copy {
+  font-size: 13px;
+  color: #94A299;
+}
+
+.social {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  letter-spacing: .1em;
+  color: #94A299;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 36px;
+  }
+  .brand {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .inner { padding: 48px 18px 32px; }
+  .grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+  }
+  .bottom {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}

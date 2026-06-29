@@ -3,250 +3,147 @@ import { useNavigate } from 'react-router-dom';
 import { loadStripe } from '@stripe/stripe-js';
 import { CardElement, Elements, useStripe, useElements } from '@stripe/react-stripe-js';
 import { supabase } from '../lib/supabase';
-import Navbar from '../components/Navbar';
+import Footer from '../components/Footer';
 import styles from './Wallet.module.css';
-import { useLang } from '../lib/i18n';
 
 const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
 
-const TOP_UP_AMOUNTS = [10, 20, 50, 100, 'Other'];
+const TOP_UP_AMOUNTS = [10, 20, 50, 100];
 
-function TopUpForm({ userId, onSuccess }) {
-  const { t } = useLang();
+function WalletForm({ profile }) {
   const stripe = useStripe();
   const elements = useElements();
   const [amount, setAmount] = useState(20);
-  const [custom, setCustom] = useState('');
+  const [customAmt, setCustomAmt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
-  const finalAmount = custom ? parseFloat(custom) : amount;
+  const finalAmount = customAmt ? parseFloat(customAmt) : amount;
 
-  const handleSubmit = async (e) => {
+  async function handleTopUp(e) {
     e.preventDefault();
-    if (!stripe || !elements) return;
-    if (!finalAmount || finalAmount < 5) {
-      setError('Minimum top-up is SGD 5.');
-      return;
-    }
-
-    setLoading(true);
     setError('');
-
+    if (!finalAmount || finalAmount < 5) { setError('Minimum top-up is SGD 5.'); return; }
+    setLoading(true);
     try {
-      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/create-payment-intent`, {
+      const { data: { session } } = await supabase.auth.getSession();
+      const backend = process.env.REACT_APP_BACKEND_URL;
+      const res = await fetch(`${backend}/wallet/create-topup-intent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: Math.round(finalAmount * 100), currency: 'sgd' }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ amount: Math.round(finalAmount * 100) }),
       });
-      const { clientSecret, error: backendError } = await res.json();
-      if (backendError) throw new Error(backendError);
-
-      const { error: stripeError, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+      const { clientSecret } = await res.json();
+      const result = await stripe.confirmCardPayment(clientSecret, {
         payment_method: { card: elements.getElement(CardElement) },
       });
-      if (stripeError) throw new Error(stripeError.message);
-
-      if (paymentIntent.status === 'succeeded') {
-        await supabase.from('wallet_topups').insert({
-          user_id: userId,
-          amount_sgd: finalAmount,
-          stripe_payment_intent_id: paymentIntent.id,
-          status: 'succeeded',
-        });
-
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('wallet_balance')
-          .eq('id', userId)
-          .single();
-
-        await supabase
-          .from('profiles')
-          .update({ wallet_balance: (profile.wallet_balance || 0) + finalAmount })
-          .eq('id', userId);
-
-        onSuccess(finalAmount);
-      }
+      if (result.error) throw new Error(result.error.message);
+      setSuccess(true);
     } catch (err) {
       setError(err.message);
-    } finally {
-      setLoading(false);
     }
-  };
+    setLoading(false);
+  }
+
+  if (success) {
+    return (
+      <div className={styles.successCard}>
+        <div className={styles.successIcon}>✓</div>
+        <h3 className={styles.successH3}>Top-up successful!</h3>
+        <p className={styles.successSub}>SGD {finalAmount.toFixed(2)} has been added to your Juzgo Wallet.</p>
+      </div>
+    );
+  }
 
   return (
-    <form onSubmit={handleSubmit} className={styles.form}>
+    <form onSubmit={handleTopUp} className={styles.form}>
+      <label className={styles.label}>Select amount</label>
       <div className={styles.amountGrid}>
-        {TOP_UP_AMOUNTS.map(a => (
+        {TOP_UP_AMOUNTS.map((a) => (
           <button
             key={a}
             type="button"
-            className={`${styles.amountBtn} ${
-              a === 'Other'
-                ? custom ? styles.amountBtnActive : ''
-                : amount === a && !custom ? styles.amountBtnActive : ''
-            }`}
-            onClick={() => {
-              if (a === 'Other') {
-                setAmount(0);
-                setCustom('');
-                setTimeout(() => document.getElementById('customAmount')?.focus(), 100);
-              } else {
-                setAmount(a);
-                setCustom('');
-              }
-            }}
+            className={`${styles.amountBtn} ${amount === a && !customAmt ? styles.amountBtnActive : ''}`}
+            onClick={() => { setAmount(a); setCustomAmt(''); }}
           >
-            {a === 'Other' ? t('wallet_custom') : `${t('sgd')} ${a}`}
+            SGD {a}
           </button>
         ))}
       </div>
 
-      <div className={styles.customWrap}>
-        <label className={styles.label}>{t('wallet_custom')} ({t('sgd')})</label>
+      <label className={styles.label} style={{ marginTop: 16 }}>Or enter custom amount</label>
+      <div className={styles.customRow}>
+        <span className={styles.customPrefix}>SGD</span>
         <input
-          id="customAmount"
           type="number"
+          placeholder="0.00"
+          value={customAmt}
+          onChange={(e) => setCustomAmt(e.target.value)}
+          className={styles.customInput}
           min="5"
-          max="1000"
-          placeholder="e.g. 35"
-          value={custom}
-          onChange={e => { setCustom(e.target.value); setAmount(0); }}
-          className={styles.input}
+          step="0.01"
         />
       </div>
 
-      <div className={styles.cardWrap}>
-        <label className={styles.label}>Card Details</label>
-        <div className={styles.cardElement}>
-          <CardElement options={{
-            style: {
-              base: {
-                color: '#ffffff',
-                fontSize: '16px',
-                '::placeholder': { color: '#666' },
-              },
-              invalid: { color: '#ff4d4d' },
-            }
-          }} />
-        </div>
+      <hr className={styles.divider} />
+
+      <label className={styles.label}>Card details</label>
+      <div className={styles.cardElement}>
+        <CardElement options={{ style: { base: { fontFamily: 'Hanken Grotesk, sans-serif', fontSize: '15px', color: '#16271E', '::placeholder': { color: '#9AA89F' } } } }} />
       </div>
+
+      <div className={styles.secureNote}>🔒 Payments are encrypted and secure</div>
 
       {error && <div className={styles.error}>{error}</div>}
 
-      <button
-        type="submit"
-        disabled={loading || !stripe}
-        className={styles.payBtn}
-      >
-        {loading ? t('loading') : `${t('wallet_topup')} ${t('sgd')} ${finalAmount || '—'}`}
+      <button type="submit" className={styles.btnSubmit} disabled={loading || !stripe}>
+        {loading ? 'Processing…' : `Top up SGD ${finalAmount > 0 ? finalAmount.toFixed(2) : '—'} →`}
       </button>
     </form>
   );
 }
 
 export default function Wallet() {
-  const { t } = useLang();
+  const [profile, setProfile] = useState(null);
   const navigate = useNavigate();
-  const [user, setUser] = useState(null);
-  const [balance, setBalance] = useState(0);
-  const [topups, setTopups] = useState([]);
-  const [success, setSuccess] = useState(null);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    init();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) { navigate('/login'); return; }
+      supabase.from('profiles').select('*').eq('id', session.user.id).single()
+        .then(({ data }) => setProfile(data));
+    });
   }, []);
 
-  const init = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { navigate('/login'); return; }
-    setUser(user);
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('wallet_balance')
-      .eq('id', user.id)
-      .single();
-    if (profile) setBalance(profile.wallet_balance || 0);
-
-    const { data: history } = await supabase
-      .from('wallet_topups')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(10);
-    if (history) setTopups(history);
-
-    setLoading(false);
-  };
-
-  const handleSuccess = (amount) => {
-    setSuccess(amount);
-    setBalance(prev => prev + amount);
-  };
-
-  if (loading) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
-      <div style={{ width: 36, height: 36, border: '3px solid rgba(255,255,255,.1)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
-    </div>
-  );
-
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
-      <Navbar />
+    <div className={styles.page}>
       <main className={styles.main}>
+        <div className={styles.eyebrow}>eWallet</div>
+        <h1 className={styles.h1}>Juzgo Wallet</h1>
+        <p className={styles.sub}>Top up your balance and use it instantly at checkout.</p>
 
-        <button className={styles.backBtn} onClick={() => navigate('/dashboard')}>
-          ← {t('back')}
-        </button>
-
-        <h1 className={styles.title}>{t('wallet_title')}</h1>
-
-        {/* Balance Card */}
-        <div className={styles.balanceCard}>
-          <div className={styles.balanceLabel}>{t('wallet_balance')}</div>
-          <div className={styles.balanceAmount}>{t('sgd')} {parseFloat(balance).toFixed(2)}</div>
-          <div className={styles.balanceSub}>Used for VoIP calls and data top-ups</div>
-        </div>
-
-        {/* Success Banner */}
-        {success && (
-          <div className={styles.successBanner}>
-            ✅ {t('sgd')} {success.toFixed(2)} — {t('wallet_success')}
-          </div>
-        )}
-
-        {/* Top Up Form */}
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>{t('wallet_topup')}</h2>
-          <Elements stripe={stripePromise}>
-            <TopUpForm userId={user?.id} onSuccess={handleSuccess} />
-          </Elements>
-        </div>
-
-        {/* Top-up History */}
-        {topups.length > 0 && (
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>{t('wallet_history')}</h2>
-            <div className={styles.historyList}>
-              {topups.map(tp => (
-                <div key={tp.id} className={styles.historyRow}>
-                  <div>
-                    <div className={styles.historyAmount}>+ {t('sgd')} {parseFloat(tp.amount_sgd).toFixed(2)}</div>
-                    <div className={styles.historyDate}>{new Date(tp.created_at).toLocaleDateString()}</div>
-                  </div>
-                  <span className={`${styles.badge} ${tp.status === 'succeeded' ? styles.badgeGreen : styles.badgeGrey}`}>
-                    {tp.status === 'succeeded' ? t('status_completed') : tp.status === 'failed' ? t('status_failed') : t('status_pending')}
-                  </span>
-                </div>
-              ))}
+        <div className={styles.layout}>
+          {/* Balance card */}
+          <div className={styles.balanceCard}>
+            <div className={styles.balanceLabel}>Current balance</div>
+            <div className={styles.balanceAmount}>
+              <span className={styles.balanceCurrency}>SGD</span>
+              <span className={styles.balanceNum}>{parseFloat(profile?.wallet_balance || 0).toFixed(2)}</span>
             </div>
+            <div className={styles.balanceFooter}>Available for checkout</div>
           </div>
-        )}
 
+          {/* Top up form */}
+          <div className={styles.topUpCard}>
+            <h2 className={styles.topUpH2}>Add funds</h2>
+            <Elements stripe={stripePromise}>
+              <WalletForm profile={profile} />
+            </Elements>
+          </div>
+        </div>
       </main>
+      <Footer />
     </div>
   );
 }

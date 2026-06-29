@@ -1,820 +1,251 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { loadStripe } from '@stripe/stripe-js';
+import { CardElement, Elements, useStripe, useElements } from '@stripe/react-stripe-js';
 import { supabase } from '../lib/supabase';
-import Navbar from '../components/Navbar';
-import styles from './Auth.module.css';
-import AffiliateBar from '../components/AffiliateBar';
-import TrustBadge from '../components/TrustBadge';
-import { useLang } from '../lib/i18n';
+import { useLang, t } from '../lib/i18n';
+import Footer from '../components/Footer';
+import styles from './Checkout.module.css';
 
-const WORKER_URL = 'https://claude-proxy.kairosventure-io.workers.dev';
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
 
-const MOCK_COUNTRIES = [
-  { code: 'SG', name: 'Singapore', flag: '🇸🇬' },
-  { code: 'JP', name: 'Japan', flag: '🇯🇵' },
-  { code: 'KR', name: 'South Korea', flag: '🇰🇷' },
-  { code: 'TH', name: 'Thailand', flag: '🇹🇭' },
-  { code: 'MY', name: 'Malaysia', flag: '🇲🇾' },
-  { code: 'AU', name: 'Australia', flag: '🇦🇺' },
-  { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
-  { code: 'US', name: 'United States', flag: '🇺🇸' },
-];
+const STEPS = ['Details', 'Review', 'Payment'];
 
-const STEP_LABELS = ['Details', 'Add-ons', 'Cart', 'Payment', 'Success'];
-
-export default function Checkout() {
-  const { t } = useLang();
-  const { state } = useLocation();
-  const [user, setUser] = useState(null);
+function CheckoutForm({ plan, country, user, walletBalance }) {
+  const stripe = useStripe();
+  const elements = useElements();
   const navigate = useNavigate();
-  const plan = state?.plan;
-  const country = state?.country;
+  const { lang } = useLang();
 
-  const [step, setStep] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [orders, setOrders] = useState([]);
-
-  // Step 1 — Details
+  const [payMethod, setPayMethod] = useState('card');
+  const [email, setEmail] = useState(user?.email || '');
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [promoCode, setPromoCode] = useState('');
+  const [promoApplied, setPromoApplied] = useState(null);
+  const [discount, setDiscount] = useState(0);
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  // Step 2 — Add-ons
-  const [cart, setCart] = useState([]);
-  const [extraCountry, setExtraCountry] = useState('');
-  const [extraPlans, setExtraPlans] = useState([]);
-  const [loadingExtra, setLoadingExtra] = useState(false);
-  const [virtualNumber, setVirtualNumber] = useState(false);
+  const price = parseFloat(plan?.price_sgd || 0);
+  const total = Math.max(0, price - discount).toFixed(2);
 
-  // Step 4 — Payment
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvc, setCardCvc] = useState('');
-  const [cardName, setCardName] = useState('');
-
-  // eWallet
-  const [walletBalance, setWalletBalance] = useState(null);
-  const [paymentMethod, setPaymentMethod] = useState('card');
-
-  // ── Corporate wallet ───────────────────────────────────────────────────────
-  const [isCorporateStaff, setIsCorporateStaff] = useState(false);
-  const [corpId, setCorpId]                     = useState(null);
-  const [corpBalance, setCorpBalance]           = useState(null);
-  const [corpName, setCorpName]                 = useState('');
-
-  // ── Reseller code ──────────────────────────────────────────────────────────
-  const [resellerCode, setResellerCode]         = useState('');
-  const [resellerDiscount, setResellerDiscount] = useState(null);
-  const [codeValidating, setCodeValidating]     = useState(false);
-  const [codeError, setCodeError]               = useState('');
-
-  // ── Validate reseller code against backend ─────────────────────────────────
-  const validateCode = useCallback(async (code, silent = false) => {
-    if (!code?.trim()) {
-      setResellerDiscount(null);
-      setCodeError('');
-      return;
-    }
-    if (!silent) setCodeValidating(true);
-    setCodeError('');
-    try {
-      const res = await fetch(`${BACKEND_URL}/reseller/validate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: code.trim().toUpperCase() }),
-      });
-      const data = await res.json();
-      if (data.valid) {
-        setResellerDiscount(data);
-      } else {
-        setResellerDiscount(null);
-        if (!silent) setCodeError(data.message || 'Invalid code');
-      }
-    } catch (_) {
-      setResellerDiscount(null);
-    }
-    if (!silent) setCodeValidating(false);
-  }, []);
-
-  // ── Load user + wallet balance + corp status ───────────────────────────────
-  useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      const u = data?.user || null;
-      setUser(u);
-      if (u) {
-        setEmail(u.email || '');
-        setName(u.user_metadata?.full_name || '');
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('wallet_balance, preferred_reseller_code, is_corporate, corp_id, corp_role')
-          .eq('id', u.id)
-          .single();
-        if (profile) {
-          setWalletBalance(parseFloat(profile.wallet_balance) || 0);
-
-          // ── Corporate staff detection ──────────────────────────
-          if (profile.is_corporate && profile.corp_id && profile.corp_role === 'staff') {
-            setIsCorporateStaff(true);
-            setCorpId(profile.corp_id);
-            const { data: corp } = await supabase
-              .from('corporates')
-              .select('company_name, wallet_balance, is_active')
-              .eq('id', profile.corp_id)
-              .single();
-            if (corp && corp.is_active && corp.approval_status === 'approved') {
-              setCorpBalance(parseFloat(corp.wallet_balance || 0));
-              setCorpName(corp.company_name);
-            }
-          }
-
-          // Auto-load saved reseller code from profile
-          if (profile.preferred_reseller_code) {
-            setResellerCode(profile.preferred_reseller_code);
-            validateCode(profile.preferred_reseller_code, true);
-            return;
-          }
-        }
-      }
-      // Fallback: check localStorage ?ref= capture (30-day window)
-      try {
-        const stored = localStorage.getItem('esimconnect_ref');
-        if (stored) {
-          const { code, expires } = JSON.parse(stored);
-          if (expires > Date.now()) {
-            setResellerCode(code);
-            validateCode(code, true);
-          } else {
-            localStorage.removeItem('esimconnect_ref');
-          }
-        }
-      } catch (_) {
-        localStorage.removeItem('esimconnect_ref');
-      }
+  async function applyPromo() {
+    if (!promoCode.trim()) return;
+    const backend = process.env.REACT_APP_BACKEND_URL;
+    const res = await fetch(`${backend}/reseller/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: promoCode.trim().toUpperCase() }),
     });
-  }, [validateCode]);
-
-  // ── Initialise cart ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (plan && country) {
-      setCart([{ ...plan, country, cartId: 'main' }]);
+    const data = await res.json();
+    if (data.valid) {
+      setPromoApplied(data);
+      setDiscount(data.discount_value || 0);
+    } else {
+      setError('Invalid or expired code.');
     }
-  }, []); // eslint-disable-line
-
-  // ── Discount calculation ───────────────────────────────────────────────────
-  const calculateDiscount = (priceSgd) => {
-    if (!resellerDiscount || !resellerDiscount.discount_value) return 0;
-    const price = parseFloat(priceSgd);
-    if (resellerDiscount.discount_type === 'percent') {
-      return parseFloat((price * resellerDiscount.discount_value / 100).toFixed(2));
-    }
-    return Math.min(parseFloat(resellerDiscount.discount_value), price);
-  };
-
-  // Cart total (before discount)
-  const cartSubtotal = cart.reduce((sum, item) => {
-    if (item.cartId === 'virtual') return sum + 5.00;
-    return sum + parseFloat(item.price_sgd || 0);
-  }, 0);
-
-  // Total discount across non-virtual items
-  const totalDiscount = cart.reduce((sum, item) => {
-    if (item.cartId === 'virtual' || item.isVirtual) return sum;
-    return sum + calculateDiscount(item.price_sgd);
-  }, 0);
-
-  const cartTotal = parseFloat((cartSubtotal - totalDiscount).toFixed(2));
-
-  // ── Save reseller code to profile after purchase ───────────────────────────
-  const saveResellerToProfile = async (userId, code) => {
-    if (!userId || !code) return;
-    try {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('preferred_reseller_code')
-        .eq('id', userId)
-        .single();
-
-      const updates = { reseller_last_purchase_at: new Date().toISOString() };
-      if (!profile?.preferred_reseller_code) {
-        updates.preferred_reseller_code = code;
-        updates.reseller_linked_at = new Date().toISOString();
-      }
-      await supabase.from('profiles').update(updates).eq('id', userId);
-    } catch (_) {}
-  };
-
-  if (!plan) {
-    return (
-      <div className={styles.page}>
-        <Navbar />
-        <main className={styles.main}>
-          <div className={styles.card} style={{ maxWidth: '480px', textAlign: 'center' }}>
-            <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
-            <h2 style={{ marginBottom: '12px' }}>No plan selected</h2>
-            <button className={styles.submitBtn} onClick={() => navigate('/plans')}>← {t('nav_plans')}</button>
-          </div>
-        </main>
-      </div>
-    );
   }
 
-  const fetchExtraPlans = async (code) => {
-    if (!code) return;
-    setLoadingExtra(true);
-    try {
-      const res = await fetch(`${WORKER_URL}/airalo/packages?country=${code}`);
-      const json = await res.json();
-      if (json.data?.[0]?.operators?.[0]?.packages) {
-        const countryMeta = MOCK_COUNTRIES.find(c => c.code === code);
-        setExtraPlans(json.data[0].operators[0].packages.map(pkg => ({
-          ...pkg, plan_name: pkg.title, data_gb: (pkg.amount / 1024).toFixed(0),
-          validity_days: pkg.day, price_sgd: (pkg.price * 1.35).toFixed(2),
-          country_code: code, country: countryMeta,
-        })));
-      }
-    } catch (e) { setExtraPlans([]); }
-    setLoadingExtra(false);
-  };
-
-  const addToCart = (item) => { const cartId = item.id + '-' + Date.now(); setCart(prev => [...prev, { ...item, cartId }]); };
-  const removeFromCart = (cartId) => { if (cartId === 'virtual') setVirtualNumber(false); setCart(prev => prev.filter(i => i.cartId !== cartId)); };
-
-  const toggleVirtualNumber = () => {
-    if (virtualNumber) {
-      setVirtualNumber(false);
-      setCart(prev => prev.filter(i => i.cartId !== 'virtual'));
-    } else {
-      setVirtualNumber(true);
-      setCart(prev => [...prev, { cartId: 'virtual', plan_name: 'Virtual Number', data_gb: null, validity_days: 30, price_sgd: '5.00', country: { flag: '📱', name: 'Virtual' }, isVirtual: true }]);
-    }
-  };
-
-  const handleDetailsNext = (e) => { e.preventDefault(); if (!name.trim() || !email.trim() || !agreedToTerms) return; setStep(1); };
-
-  const handlePaymentSubmit = (e) => {
+  async function handleSubmit(e) {
     e.preventDefault();
-    const digits = cardNumber.replace(/\s/g, '');
-    if (digits.length < 16 || cardExpiry.length < 5 || cardCvc.length < 3 || !cardName.trim()) { setError('Please fill in all card details.'); return; }
-    setError(null);
-    handleConfirmOrder('card');
-  };
-
-  const handleWalletPay = () => { if (walletBalance === null || walletBalance < cartTotal) return; handleConfirmOrder('wallet'); };
-
-  const handleCorpWalletPay = () => {
-    if (corpBalance === null || corpBalance < cartTotal) return;
-    handleConfirmOrder('corp_wallet');
-  };
-
-  const handleConfirmOrder = async (method = 'card') => {
+    setError('');
     setLoading(true);
-    setError(null);
     try {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      const sessionId = 'EC-' + Date.now();
-      const results = [];
-
-      // ── Personal wallet deduction ──────────────────────────────
-      if (method === 'wallet') {
-        const newBalance = parseFloat((walletBalance - cartTotal).toFixed(2));
-        const { error: walletErr } = await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', currentUser.id);
-        if (walletErr) throw new Error('Wallet deduction failed: ' + walletErr.message);
-        setWalletBalance(newBalance);
-      }
-
-      // ── Corporate wallet deduction ─────────────────────────────
-      if (method === 'corp_wallet') {
-        if (!isCorporateStaff || !corpId) throw new Error('Corporate account not linked. Contact your admin.');
-        if (corpBalance < cartTotal) throw new Error('Insufficient company wallet balance.');
-        const { error: corpErr } = await supabase
-          .from('corporates')
-          .update({ wallet_balance: corpBalance - cartTotal })
-          .eq('id', corpId);
-        if (corpErr) throw new Error('Corporate wallet deduction failed: ' + corpErr.message);
-        setCorpBalance(prev => parseFloat((prev - cartTotal).toFixed(2)));
-      }
-
-      for (const item of cart) {
-        if (item.isVirtual) {
-          results.push({ order_code: 'VN-' + Date.now(), isVirtual: true, plan_name: 'Virtual Number', country: { name: 'Virtual', flag: '📱' } });
-          continue;
-        }
-
-        const res = await fetch(`${WORKER_URL}/airalo/orders`, {
+      const backend = process.env.REACT_APP_BACKEND_URL;
+      if (payMethod === 'wallet') {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch(`${backend}/order/wallet-pay`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ planId: plan.id, promoCode: promoCode || null }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Payment failed');
+        navigate('/order-confirmation', { state: { order: data.order } });
+      } else {
+        const res = await fetch(`${backend}/create-payment-intent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ package_id: item.id, user_email: email, user_name: name }),
+          body: JSON.stringify({ amount: Math.round(parseFloat(total) * 100), currency: 'sgd', planId: plan.id }),
         });
-        const json = await res.json();
-        if (!json.data) throw new Error('Order failed for ' + item.plan_name);
-
-        const o = json.data;
-        const itemDiscount = calculateDiscount(item.price_sgd);
-
-        await supabase.from('orders').insert({
-          user_id:       currentUser?.id || null,
-          package_id:    item.id,
-          package_title: item.plan_name,
-          country_code:  item.country_code || item.country?.iso_code || item.country?.code,
-          country_name:  item.country?.name,
-          validity_days: item.validity_days,
-          data_amount:   item.data_gb + ' GB',
-          price_sgd:     item.price_sgd,
-          order_code:    o.order_code,
-          iccid:         o.iccid,
-          qr_code:       o.qr_code,
-          qr_url:        o.qr_url,
-          customer_email: email,
-          customer_name:  name,
-          session_id:    sessionId,
-          status:        'completed',
-          payment_method: method,
-          // ── Reseller fields ──
-          reseller_code: resellerCode && resellerDiscount ? resellerCode.toUpperCase() : null,
-          discount_sgd:  itemDiscount,
+        const { clientSecret } = await res.json();
+        const result = await stripe.confirmCardPayment(clientSecret, {
+          payment_method: { card: elements.getElement(CardElement), billing_details: { name, email } },
         });
-
-        results.push({ ...o, plan_name: item.plan_name, country: item.country });
-
-        // Push notification — order confirmed (logged-in users only)
-        if (currentUser?.id) {
-          fetch(`${BACKEND_URL}/push/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userId: currentUser.id,
-              title:  '📱 eSIM Order Confirmed',
-              body:   `Your ${item.plan_name} eSIM is ready. Tap to view your QR code.`,
-              url:    '/purchases',
-            }),
-          }).catch(() => {});
-        }
+        if (result.error) throw new Error(result.error.message);
+        navigate('/order-confirmation', { state: { paymentIntent: result.paymentIntent, plan, country, promoCode } });
       }
-
-      // Save reseller code to profile (after all orders succeed)
-      if (currentUser?.id && resellerCode && resellerDiscount) {
-        await saveResellerToProfile(currentUser.id, resellerCode.toUpperCase());
-        localStorage.removeItem('esimconnect_ref');
-      }
-
-      setOrders(results);
-      setStep(4);
-    } catch (err) { setError(t('error') + ': ' + err.message); }
+    } catch (err) {
+      setError(err.message);
+    }
     setLoading(false);
-  };
+  }
 
-  const formatCard   = (val) => val.replace(/\D/g, '').slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ');
-  const formatExpiry = (val) => { const cleaned = val.replace(/\D/g, '').slice(0, 4); return cleaned.length >= 3 ? cleaned.slice(0, 2) + '/' + cleaned.slice(2) : cleaned; };
-
-  const StepIndicator = () => (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', marginBottom: '28px' }}>
-      {STEP_LABELS.slice(0, 4).map((label, i) => (
-        <React.Fragment key={i}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: i <= step ? 'var(--accent)' : 'rgba(255,255,255,0.1)', color: i <= step ? '#000' : 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700 }}>
-              {i < step ? '✓' : i + 1}
+  return (
+    <form onSubmit={handleSubmit}>
+      {/* Step indicator */}
+      <div className={styles.steps}>
+        {STEPS.map((s, i) => (
+          <React.Fragment key={s}>
+            <div className={styles.stepItem}>
+              <span className={`${styles.stepDot} ${step > i + 1 ? styles.stepDone : step === i + 1 ? styles.stepActive : ''}`}>
+                {step > i + 1 ? '✓' : i + 1}
+              </span>
+              <span className={`${styles.stepLabel} ${step === i + 1 ? styles.stepLabelActive : ''}`}>{s}</span>
             </div>
-            <span style={{ fontSize: '10px', color: i === step ? 'var(--accent)' : 'var(--muted)', fontWeight: i === step ? 700 : 400 }}>{label}</span>
-          </div>
-          {i < 3 && <div style={{ width: '20px', height: '1px', background: i < step ? 'var(--accent)' : 'rgba(255,255,255,0.15)', marginBottom: '14px' }} />}
-        </React.Fragment>
-      ))}
-    </div>
-  );
+            {i < STEPS.length - 1 && <span className={styles.stepLine} />}
+          </React.Fragment>
+        ))}
+      </div>
 
-  const CartItemRow = ({ item }) => (
-    <div style={{ background: 'rgba(0,200,255,0.06)', border: '1px solid rgba(0,200,255,0.2)', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-      <span style={{ fontSize: '24px' }}>{item.country?.flag || item.country?.flag_emoji || '🌍'}</span>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 700, fontSize: '14px' }}>{item.country?.name}</div>
-        <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-          {item.isVirtual ? `Virtual Number · 30 ${t('days')}` : `${item.plan_name} · ${item.data_gb}${t('gb')} · ${item.validity_days} ${t('days')}`}
-        </div>
-      </div>
-      <div style={{ textAlign: 'right', marginRight: '6px' }}>
-        <div style={{ fontWeight: 800, color: 'var(--accent)', fontSize: '14px' }}>
-          {t('sgd')} {item.isVirtual ? '5.00' : item.price_sgd}
-        </div>
-        {!item.isVirtual && resellerDiscount && calculateDiscount(item.price_sgd) > 0 && (
-          <div style={{ fontSize: '11px', color: '#34d399', fontWeight: 600 }}>
-            -{t('sgd')} {calculateDiscount(item.price_sgd).toFixed(2)}
-          </div>
-        )}
-      </div>
-      <button onClick={() => removeFromCart(item.cartId)} style={{ background: 'rgba(255,59,48,0.15)', border: '1px solid rgba(255,59,48,0.3)', borderRadius: '8px', color: '#ff3b30', width: '28px', height: '28px', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
-    </div>
-  );
+      <div className={styles.cols}>
+        {/* Order summary */}
+        <div className={styles.card}>
+          <h2 className={styles.cardH2}>Order summary</h2>
+          <p className={styles.cardSub}>Your QR code is emailed instantly after payment.</p>
 
-  // ── Referral Code Field ────────────────────────────────────────────────────
-  const ReferralField = () => (
-    <div style={{ margin: '16px 0' }}>
-      <div style={{ fontSize: '13px', fontWeight: 600, color: '#b0c4e8', marginBottom: '8px' }}>
-        Referral / Promo Code
-        <span style={{ fontWeight: 400, color: '#6b7fa3', marginLeft: '6px', fontSize: '12px' }}>(optional)</span>
-      </div>
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <input
-          style={{
-            flex: 1, background: 'rgba(255,255,255,0.05)',
-            border: `1px solid ${resellerDiscount ? 'rgba(52,211,153,0.5)' : codeError ? 'rgba(248,113,113,0.5)' : 'rgba(255,255,255,0.15)'}`,
-            borderRadius: '8px', padding: '10px 14px', color: '#e8f0fe',
-            fontSize: '13px', fontFamily: "'Courier New', monospace",
-            letterSpacing: '1px', outline: 'none', textTransform: 'uppercase',
-          }}
-          placeholder="e.g. SG-JOHN-00001"
-          value={resellerCode}
-          onChange={e => {
-            setResellerCode(e.target.value.toUpperCase());
-            setResellerDiscount(null);
-            setCodeError('');
-          }}
-          onBlur={() => validateCode(resellerCode)}
-        />
-        <button
-          type="button"
-          onClick={() => validateCode(resellerCode)}
-          disabled={codeValidating || !resellerCode}
-          style={{
-            padding: '10px 16px', borderRadius: '8px',
-            background: 'rgba(0,200,200,0.15)', color: '#00c8c8',
-            border: '1px solid rgba(0,200,200,0.3)', fontSize: '13px',
-            fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
-            opacity: (!resellerCode || codeValidating) ? 0.4 : 1,
-          }}
-        >
-          {codeValidating ? '…' : 'Apply'}
-        </button>
-      </div>
-      {resellerDiscount && (
-        <div style={{ marginTop: '8px', fontSize: '13px', color: '#34d399', fontWeight: 500 }}>
-          ✓ {resellerDiscount.message}
+          {plan && (
+            <div className={styles.cartItem}>
+              <span className={styles.cartFlag}>{country?.flag_emoji}</span>
+              <div className={styles.cartDetails}>
+                <div className={styles.cartName}>{plan.plan_name || `${country?.name} eSIM`}</div>
+                <div className={styles.cartMeta}>{plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`} · {plan.validity_days} days</div>
+              </div>
+              <div className={styles.cartPrice}>SGD {price.toFixed(2)}</div>
+            </div>
+          )}
+
+          {/* Promo code */}
+          <div className={styles.promoWrap}>
+            <label className={styles.label}>Referral / promo code <span className={styles.optional}>(optional)</span></label>
+            <div className={styles.promoRow}>
+              <input
+                type="text"
+                placeholder="SG-JOHN-00001"
+                value={promoCode}
+                onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                className={`${styles.input} ${styles.inputMono}`}
+                disabled={!!promoApplied}
+              />
+              <button type="button" onClick={applyPromo} className={styles.btnApply} disabled={!!promoApplied}>
+                {promoApplied ? 'Applied ✓' : 'Apply'}
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.totals}>
+            <div className={styles.totalRow}>
+              <span>Subtotal</span><span>SGD {price.toFixed(2)}</span>
+            </div>
+            {discount > 0 && (
+              <div className={`${styles.totalRow} ${styles.totalDiscount}`}>
+                <span>Discount ({promoCode})</span><span>− SGD {discount.toFixed(2)}</span>
+              </div>
+            )}
+            <div className={styles.totalFinal}>
+              <span>Total</span>
+              <span className={styles.totalAmt}>SGD {total}</span>
+            </div>
+          </div>
         </div>
-      )}
-      {codeError && (
-        <div style={{ marginTop: '8px', fontSize: '13px', color: '#f87171' }}>
-          ✗ {codeError}
+
+        {/* Payment */}
+        <div className={styles.card}>
+          <h2 className={styles.cardH2}>Payment</h2>
+
+          {/* Card option */}
+          <div
+            className={`${styles.payOption} ${payMethod === 'card' ? styles.payOptionActive : ''}`}
+            onClick={() => setPayMethod('card')}
+          >
+            <div className={styles.payOptionLeft}>
+              <span className={styles.payIcon}>🏦</span>
+              <span className={styles.payLabel}>Credit / debit card</span>
+            </div>
+            <span className={`${styles.radio} ${payMethod === 'card' ? styles.radioActive : ''}`} />
+          </div>
+
+          {/* Wallet option */}
+          {user && (
+            <div
+              className={`${styles.payOption} ${payMethod === 'wallet' ? styles.payOptionActive : ''}`}
+              onClick={() => setPayMethod('wallet')}
+            >
+              <div className={styles.payOptionLeft}>
+                <span className={styles.payIcon}>💳</span>
+                <div>
+                  <div className={styles.payLabel}>Juzgo Wallet</div>
+                  <div className={styles.payMeta}>Balance: SGD {parseFloat(walletBalance || 0).toFixed(2)}</div>
+                </div>
+              </div>
+              <span className={`${styles.radio} ${payMethod === 'wallet' ? styles.radioActive : ''}`} />
+            </div>
+          )}
+
+          {/* Card fields */}
+          {payMethod === 'card' && (
+            <div className={styles.cardFields}>
+              <label className={styles.label}>Name on card</label>
+              <input type="text" placeholder="John Smith" value={name} onChange={(e) => setName(e.target.value)} className={styles.input} required />
+              <label className={styles.label}>Email</label>
+              <input type="email" placeholder="your@email.com" value={email} onChange={(e) => setEmail(e.target.value)} className={styles.input} required />
+              <label className={styles.label}>Card details</label>
+              <div className={styles.cardElement}>
+                <CardElement options={{ style: { base: { fontFamily: 'Hanken Grotesk, sans-serif', fontSize: '15px', color: '#16271E', '::placeholder': { color: '#9AA89F' } } } }} />
+              </div>
+            </div>
+          )}
+
+          {payMethod === 'wallet' && (
+            <div className={styles.walletInfo}>
+              Paying with your Juzgo Wallet. <strong>SGD {total}</strong> will be deducted, leaving <strong>SGD {(parseFloat(walletBalance || 0) - parseFloat(total)).toFixed(2)}</strong>.
+            </div>
+          )}
+
+          <div className={styles.secureNote}>🔒 Payments are encrypted and secure</div>
+
+          {error && <div className={styles.error}>{error}</div>}
+
+          <button type="submit" className={styles.btnSubmit} disabled={loading || !stripe}>
+            {loading ? 'Processing…' : `Get my eSIM · SGD ${total} →`}
+          </button>
         </div>
-      )}
-    </div>
+      </div>
+    </form>
   );
+}
+
+export default function Checkout() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { plan, country } = location.state || {};
+  const [user, setUser] = useState(null);
+  const [walletBalance, setWalletBalance] = useState(0);
+
+  useEffect(() => {
+    if (!plan) navigate('/plans');
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) fetchWallet(session.user.id);
+    });
+  }, []);
+
+  async function fetchWallet(userId) {
+    const { data } = await supabase.from('profiles').select('wallet_balance').eq('id', userId).single();
+    if (data) setWalletBalance(data.wallet_balance);
+  }
+
+  if (!plan) return null;
 
   return (
     <div className={styles.page}>
-      <Navbar />
       <main className={styles.main}>
-        <div className={styles.card} style={{ maxWidth: '520px' }}>
-
-          {step < 4 && <StepIndicator />}
-
-          {/* ── STEP 0: DETAILS ── */}
-          {step === 0 && (
-            <>
-              <h2 style={{ marginBottom: '6px', fontWeight: 800 }}>Your Details</h2>
-              <p style={{ color: 'var(--muted)', fontSize: '13px', marginBottom: '20px' }}>We'll send your eSIM QR code to this email.</p>
-              <CartItemRow item={cart[0] || { ...plan, country, cartId: 'main' }} />
-              <form onSubmit={handleDetailsNext} className={styles.form} style={{ marginTop: '20px' }}>
-                <div className={styles.field}>
-                  <label>{t('auth_name')}</label>
-                  <input type="text" placeholder="John Smith" value={name} onChange={e => setName(e.target.value)} required />
-                </div>
-                <div className={styles.field}>
-                  <label>{t('auth_email')}</label>
-                  <input type="email" placeholder="your@email.com" value={email} onChange={e => setEmail(e.target.value)} required />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', margin: '8px 0 20px' }}>
-                  <input type="checkbox" id="terms" checked={agreedToTerms} onChange={e => setAgreedToTerms(e.target.checked)} style={{ marginTop: '3px', accentColor: 'var(--accent)', width: '16px', height: '16px', flexShrink: 0, cursor: 'pointer' }} />
-                  <label htmlFor="terms" style={{ fontSize: '13px', color: 'var(--muted)', cursor: 'pointer', lineHeight: 1.5 }}>
-                    I agree to the <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}>Terms & Conditions</a>
-                  </label>
-                </div>
-                <button type="submit" className={styles.submitBtn} disabled={!name || !email || !agreedToTerms} style={{ opacity: name && email && agreedToTerms ? 1 : 0.5 }}>
-                  Continue to Add-ons →
-                </button>
-              </form>
-            </>
-          )}
-
-          {/* ── STEP 1: ADD-ONS ── */}
-          {step === 1 && (
-            <>
-              <h2 style={{ marginBottom: '6px', fontWeight: 800 }}>Enhance Your Trip</h2>
-              <p style={{ color: 'var(--muted)', fontSize: '13px', marginBottom: '24px' }}>Optional extras — skip to continue.</p>
-
-              <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '14px', padding: '16px', marginBottom: '14px' }}>
-                <div style={{ fontWeight: 700, marginBottom: '4px' }}>📶 Add Another eSIM Plan</div>
-                <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>Visiting multiple countries?</div>
-                <select style={{ width: '100%', background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', padding: '10px 12px', color: '#ffffff', fontSize: '14px', marginBottom: '10px' }}
-                  value={extraCountry} onChange={e => { setExtraCountry(e.target.value); fetchExtraPlans(e.target.value); }}>
-                  <option value="">Select a country...</option>
-                  {MOCK_COUNTRIES.filter(c => !cart.some(ci => (ci.country_code || ci.country?.code) === c.code)).map(c => (<option key={c.code} value={c.code}>{c.flag} {c.name}</option>))}
-                </select>
-                {loadingExtra && <div style={{ color: 'var(--muted)', fontSize: '13px' }}>{t('loading')}</div>}
-                {extraPlans.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {extraPlans.map(pkg => (
-                      <div key={pkg.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(0,200,255,0.06)', border: '1px solid rgba(0,200,255,0.15)', borderRadius: '10px', padding: '10px 14px' }}>
-                        <div>
-                          <div style={{ fontWeight: 600, fontSize: '13px' }}>{pkg.plan_name}</div>
-                          <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{pkg.data_gb}{t('gb')} · {pkg.validity_days} {t('days')}</div>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontWeight: 700, color: 'var(--accent)', fontSize: '13px' }}>{t('sgd')} {pkg.price_sgd}</span>
-                          <button onClick={() => { addToCart(pkg); setExtraPlans([]); setExtraCountry(''); }} style={{ background: 'var(--accent)', border: 'none', borderRadius: '8px', color: '#000', fontWeight: 700, fontSize: '12px', padding: '6px 12px', cursor: 'pointer' }}>Add</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Virtual Number */}
-              <div style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${virtualNumber ? 'var(--accent)' : 'rgba(255,255,255,0.1)'}`, borderRadius: '14px', padding: '16px', marginBottom: '14px', cursor: 'pointer' }} onClick={toggleVirtualNumber}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontWeight: 700, marginBottom: '4px' }}>📱 Virtual Number</div>
-                    <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Calls & SMS while abroad · {t('sgd')} 5.00/month</div>
-                    <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '4px' }}>Coming Soon — Reserve yours</div>
-                  </div>
-                  <div style={{ width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0, background: virtualNumber ? 'var(--accent)' : 'rgba(255,255,255,0.1)', border: '2px solid ' + (virtualNumber ? 'var(--accent)' : 'rgba(255,255,255,0.2)'), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000', fontWeight: 700, fontSize: '14px' }}>
-                    {virtualNumber ? '✓' : ''}
-                  </div>
-                </div>
-              </div>
-
-              {/* Hotel Affiliate */}
-              <div style={{ background: 'linear-gradient(135deg, rgba(255,180,0,0.08), rgba(255,100,0,0.08))', border: '1px solid rgba(255,180,0,0.2)', borderRadius: '14px', padding: '16px', marginBottom: '24px' }}>
-                <div style={{ fontWeight: 700, marginBottom: '4px' }}>🏨 Find Hotels for Your Trip</div>
-                <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>Compare thousands of hotels, guesthouses and apartments.</div>
-                <a href="https://www.booking.com" target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', background: 'rgba(255,180,0,0.15)', border: '1px solid rgba(255,180,0,0.3)', borderRadius: '8px', padding: '8px 16px', color: '#ffb400', fontWeight: 700, fontSize: '13px', textDecoration: 'none' }}>Browse Hotels on Booking.com →</a>
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={() => setStep(0)} style={{ flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '14px', color: 'inherit', fontWeight: 600, fontSize: '14px', cursor: 'pointer' }}>← {t('back')}</button>
-                <button onClick={() => setStep(2)} className={styles.submitBtn} style={{ flex: 2 }}>
-                  Review Cart ({cart.length} item{cart.length !== 1 ? 's' : ''}) →
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* ── STEP 2: CART REVIEW ── */}
-          {step === 2 && (
-            <>
-              <h2 style={{ marginBottom: '6px', fontWeight: 800 }}>{t('checkout_summary')}</h2>
-              <p style={{ color: 'var(--muted)', fontSize: '13px', marginBottom: '24px' }}>Review your items — tap ✕ to remove any.</p>
-
-              {cart.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '32px', color: 'var(--muted)', background: 'rgba(255,255,255,0.03)', borderRadius: '14px', marginBottom: '24px' }}>
-                  <div style={{ fontSize: '40px', marginBottom: '12px' }}>🛒</div>
-                  <div style={{ fontWeight: 600, marginBottom: '8px' }}>Your cart is empty</div>
-                  <div style={{ fontSize: '13px' }}>Go back to add plans</div>
-                </div>
-              ) : (
-                <>
-                  {cart.map(item => <CartItemRow key={item.cartId} item={item} />)}
-
-                  {/* ── Referral code field ── */}
-                  <ReferralField />
-
-                  {/* Totals */}
-                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '14px', marginTop: '4px', marginBottom: '24px' }}>
-                    {totalDiscount > 0 && (
-                      <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                          <span style={{ fontSize: '13px', color: 'var(--muted)' }}>Subtotal</span>
-                          <span style={{ fontSize: '13px' }}>{t('sgd')} {cartSubtotal.toFixed(2)}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                          <span style={{ fontSize: '13px', color: '#34d399' }}>Discount ({resellerCode})</span>
-                          <span style={{ fontSize: '13px', color: '#34d399', fontWeight: 600 }}>-{t('sgd')} {totalDiscount.toFixed(2)}</span>
-                        </div>
-                      </>
-                    )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: 700, fontSize: '15px' }}>{t('checkout_total')}</span>
-                      <span style={{ fontWeight: 800, color: 'var(--accent)', fontSize: '20px' }}>{t('sgd')} {cartTotal.toFixed(2)}</span>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={() => setStep(1)} style={{ flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '14px', color: 'inherit', fontWeight: 600, fontSize: '14px', cursor: 'pointer' }}>← {t('back')}</button>
-                <button onClick={() => setStep(3)} className={styles.submitBtn} style={{ flex: 2, opacity: cart.length === 0 ? 0.4 : 1 }} disabled={cart.length === 0}>
-                  {t('checkout_pay')} →
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* ── STEP 3: PAYMENT ── */}
-          {step === 3 && (
-            <>
-              <h2 style={{ marginBottom: '6px', fontWeight: 800 }}>{t('checkout_title')}</h2>
-              <p style={{ color: 'var(--muted)', fontSize: '13px', marginBottom: '24px' }}>
-                {t('checkout_total')}: <strong style={{ color: 'var(--accent)' }}>{t('sgd')} {cartTotal.toFixed(2)}</strong>
-                {totalDiscount > 0 && (
-                  <span style={{ color: '#34d399', fontSize: '12px', marginLeft: '8px' }}>
-                    (saving {t('sgd')} {totalDiscount.toFixed(2)})
-                  </span>
-                )}
-              </p>
-
-              {error && (
-                <div style={{ background: 'rgba(255,59,48,0.1)', border: '1px solid rgba(255,59,48,0.3)', borderRadius: '10px', padding: '12px 16px', color: '#ff3b30', fontSize: '13px', marginBottom: '16px' }}>{error}</div>
-              )}
-
-              {user && (
-                <div style={{ marginBottom: '20px' }}>
-
-                  {/* ── Corporate wallet option (staff only) ── */}
-                  {isCorporateStaff && corpBalance !== null && (
-                    corpBalance >= cartTotal ? (
-                      <div onClick={() => setPaymentMethod('corp_wallet')} style={{ background: paymentMethod === 'corp_wallet' ? 'rgba(56,189,248,0.12)' : 'rgba(255,255,255,0.04)', border: `1px solid ${paymentMethod === 'corp_wallet' ? '#38bdf8' : 'rgba(255,255,255,0.12)'}`, borderRadius: '14px', padding: '16px', cursor: 'pointer', marginBottom: '10px', transition: 'all 0.2s' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <span style={{ fontSize: '22px' }}>🏢</span>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: '14px' }}>Company Wallet — {corpName}</div>
-                              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                                Balance: {t('sgd')} {corpBalance.toFixed(2)} → {t('sgd')} {(corpBalance - cartTotal).toFixed(2)} after
-                              </div>
-                            </div>
-                          </div>
-                          <div style={{ width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0, background: paymentMethod === 'corp_wallet' ? '#38bdf8' : 'rgba(255,255,255,0.1)', border: '2px solid ' + (paymentMethod === 'corp_wallet' ? '#38bdf8' : 'rgba(255,255,255,0.25)'), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#000', fontWeight: 700 }}>
-                            {paymentMethod === 'corp_wallet' ? '✓' : ''}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ background: 'rgba(255,180,0,0.07)', border: '1px solid rgba(255,180,0,0.25)', borderRadius: '14px', padding: '14px 16px', marginBottom: '10px' }}>
-                        <div style={{ fontWeight: 700, fontSize: '13px', color: '#ffb400' }}>🏢 Company Wallet — {corpName}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
-                          Balance {t('sgd')} {corpBalance.toFixed(2)} — insufficient. Ask your admin to top up.
-                        </div>
-                      </div>
-                    )
-                  )}
-
-                  {/* ── Personal eWallet option ── */}
-                  {walletBalance !== null && (
-                    walletBalance >= cartTotal ? (
-                      <div onClick={() => setPaymentMethod('wallet')} style={{ background: paymentMethod === 'wallet' ? 'rgba(0,200,255,0.12)' : 'rgba(255,255,255,0.04)', border: `1px solid ${paymentMethod === 'wallet' ? 'var(--accent)' : 'rgba(255,255,255,0.12)'}`, borderRadius: '14px', padding: '16px', cursor: 'pointer', marginBottom: '10px', transition: 'all 0.2s' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <span style={{ fontSize: '22px' }}>💳</span>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: '14px' }}>{t('checkout_wallet')}</div>
-                              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                                {t('checkout_balance')}: {t('sgd')} {walletBalance.toFixed(2)} → {t('sgd')} {(walletBalance - cartTotal).toFixed(2)} after
-                              </div>
-                            </div>
-                          </div>
-                          <div style={{ width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0, background: paymentMethod === 'wallet' ? 'var(--accent)' : 'rgba(255,255,255,0.1)', border: '2px solid ' + (paymentMethod === 'wallet' ? 'var(--accent)' : 'rgba(255,255,255,0.25)'), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#000', fontWeight: 700 }}>
-                            {paymentMethod === 'wallet' ? '✓' : ''}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ background: 'rgba(255,180,0,0.07)', border: '1px solid rgba(255,180,0,0.25)', borderRadius: '14px', padding: '14px 16px', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '13px', color: '#ffb400' }}>💳 {t('wallet_title')}: {t('sgd')} {walletBalance.toFixed(2)}</div>
-                          <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>{t('checkout_insufficient')} — need {t('sgd')} {(cartTotal - walletBalance).toFixed(2)} more</div>
-                        </div>
-                        <button type="button" onClick={() => window.open('/wallet', '_blank')} style={{ background: 'rgba(255,180,0,0.15)', border: '1px solid rgba(255,180,0,0.3)', borderRadius: '8px', padding: '7px 12px', color: '#ffb400', fontWeight: 700, fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                          {t('checkout_topup')} →
-                        </button>
-                      </div>
-                    )
-                  )}
-
-                  {/* ── Card option ── */}
-                  <div onClick={() => setPaymentMethod('card')} style={{ background: paymentMethod === 'card' ? 'rgba(0,200,255,0.12)' : 'rgba(255,255,255,0.04)', border: `1px solid ${paymentMethod === 'card' ? 'var(--accent)' : 'rgba(255,255,255,0.12)'}`, borderRadius: '14px', padding: '14px 16px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'all 0.2s' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '22px' }}>🏦</span>
-                      <div style={{ fontWeight: 700, fontSize: '14px' }}>{t('checkout_card')}</div>
-                    </div>
-                    <div style={{ width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0, background: paymentMethod === 'card' ? 'var(--accent)' : 'rgba(255,255,255,0.1)', border: '2px solid ' + (paymentMethod === 'card' ? 'var(--accent)' : 'rgba(255,255,255,0.25)'), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#000', fontWeight: 700 }}>
-                      {paymentMethod === 'card' ? '✓' : ''}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Card Form */}
-              {(!user || paymentMethod === 'card') && (
-                <form onSubmit={handlePaymentSubmit} className={styles.form}>
-                  <div className={styles.field}>
-                    <label>Name on Card</label>
-                    <input type="text" placeholder="John Smith" value={cardName} onChange={e => setCardName(e.target.value)} required />
-                  </div>
-                  <div className={styles.field}>
-                    <label>Card Number</label>
-                    <input type="text" placeholder="1234 5678 9012 3456" value={cardNumber} onChange={e => setCardNumber(formatCard(e.target.value))} maxLength={19} required />
-                  </div>
-                  <div style={{ display: 'flex', gap: '12px' }}>
-                    <div className={styles.field} style={{ flex: 1 }}>
-                      <label>Expiry</label>
-                      <input type="text" placeholder="MM/YY" value={cardExpiry} onChange={e => setCardExpiry(formatExpiry(e.target.value))} maxLength={5} required />
-                    </div>
-                    <div className={styles.field} style={{ flex: 1 }}>
-                      <label>CVC</label>
-                      <input type="text" placeholder="123" value={cardCvc} onChange={e => setCardCvc(e.target.value.replace(/\D/g, '').slice(0, 3))} maxLength={3} required />
-                    </div>
-                  </div>
-                  <div style={{ background: 'rgba(76,217,100,0.07)', border: '1px solid rgba(76,217,100,0.2)', borderRadius: '10px', padding: '10px 14px', fontSize: '12px', color: '#4cd964', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    🔒 Payments are encrypted and secure
-                  </div>
-                  <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-                    <button type="button" onClick={() => setStep(2)} style={{ flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '14px', color: 'inherit', fontWeight: 600, fontSize: '14px', cursor: 'pointer' }}>← {t('back')}</button>
-                    <button type="submit" className={styles.submitBtn} style={{ flex: 2 }} disabled={loading}>
-                      {loading ? <span className={styles.spinner}></span> : `Get My eSIM · ${t('sgd')} ${cartTotal.toFixed(2)} →`}
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* Personal Wallet Pay Button */}
-              {user && paymentMethod === 'wallet' && walletBalance >= cartTotal && (
-                <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-                  <button type="button" onClick={() => setStep(2)} style={{ flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '14px', color: 'inherit', fontWeight: 600, fontSize: '14px', cursor: 'pointer' }}>← {t('back')}</button>
-                  <button type="button" onClick={handleWalletPay} className={styles.submitBtn} style={{ flex: 2 }} disabled={loading}>
-                    {loading ? <span className={styles.spinner}></span> : `${t('checkout_pay')} ${t('sgd')} ${cartTotal.toFixed(2)} →`}
-                  </button>
-                </div>
-              )}
-
-              {/* Corporate Wallet Pay Button */}
-              {user && paymentMethod === 'corp_wallet' && corpBalance !== null && corpBalance >= cartTotal && (
-                <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-                  <button type="button" onClick={() => setStep(2)} style={{ flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '14px', color: 'inherit', fontWeight: 600, fontSize: '14px', cursor: 'pointer' }}>← {t('back')}</button>
-                  <button type="button" onClick={handleCorpWalletPay} className={styles.submitBtn} style={{ flex: 2, background: 'linear-gradient(135deg, #0f172a, #1e3a5f)' }} disabled={loading}>
-                    {loading ? <span className={styles.spinner}></span> : `Pay via ${corpName} · ${t('sgd')} ${cartTotal.toFixed(2)} →`}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── STEP 4: SUCCESS ── */}
-          {step === 4 && (
-            <>
-              <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-                <div style={{ fontSize: '56px', marginBottom: '12px' }}>🎉</div>
-                <h2 style={{ fontWeight: 800, marginBottom: '8px' }}>You're all set!</h2>
-                <TrustBadge dark={false} style={{ marginTop: '24px', borderRadius: '10px', border: '1px solid #e5e7eb' }} />
-                <p style={{ color: 'var(--muted)', fontSize: '14px' }}>
-                  Your eSIM QR code(s) have been sent to <strong>{email}</strong>
-                </p>
-              </div>
-
-              {orders.map((o, i) => (
-                <div key={i} style={{ background: 'rgba(0,200,255,0.06)', border: '1px solid rgba(0,200,255,0.2)', borderRadius: '14px', padding: '16px 20px', marginBottom: '14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: '14px' }}>{o.country?.flag || o.country?.flag_emoji || '🌍'} {o.plan_name}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{t('confirm_order')}: {o.order_code}</div>
-                    </div>
-                    {!o.isVirtual && o.iccid && (
-                      <div style={{ fontSize: '10px', color: 'var(--muted)', fontFamily: 'monospace', textAlign: 'right', maxWidth: '140px', wordBreak: 'break-all' }}>{o.iccid}</div>
-                    )}
-                  </div>
-                  {o.isVirtual ? (
-                    <div style={{ background: 'rgba(255,180,0,0.08)', border: '1px solid rgba(255,180,0,0.2)', borderRadius: '10px', padding: '12px', textAlign: 'center', color: '#ffb400', fontSize: '13px', fontWeight: 600 }}>
-                      📱 Virtual Number reserved — we'll contact you at launch!
-                    </div>
-                  ) : (
-                    <div style={{ textAlign: 'center' }}>
-                      <img src={o.qr_url} alt="eSIM QR Code" style={{ width: '160px', height: '160px', borderRadius: '12px', background: '#fff', padding: '8px' }} />
-                      <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '8px' }}>{t('confirm_qr')}</div>
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {!user && (
-                <div style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.08), rgba(123,47,255,0.08))', border: '1px solid rgba(0,200,255,0.25)', borderRadius: '16px', padding: '20px', marginBottom: '16px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '28px', marginBottom: '8px' }}>🔐</div>
-                  <div style={{ fontWeight: 800, fontSize: '15px', marginBottom: '6px' }}>Save your eSIM forever</div>
-                  <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '16px', lineHeight: 1.5 }}>Create a free account to re-download your QR codes anytime, track orders, and get 5 free itinerary searches.</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <button onClick={() => navigate('/register')} style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent2))', border: 'none', borderRadius: '10px', padding: '12px', color: '#000', fontWeight: 800, fontSize: '14px', cursor: 'pointer' }}>{t('auth_register')} →</button>
-                    <button onClick={() => navigate('/login')} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px', padding: '10px', color: 'inherit', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}>{t('auth_have_account')} {t('auth_login')}</button>
-                  </div>
-                </div>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
-                <button className={styles.submitBtn} onClick={() => navigate('/purchases')}>{t('purchases_title')} →</button>
-                <button onClick={() => navigate('/itinerary')} style={{ background: 'none', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '14px', color: 'inherit', fontWeight: 600, fontSize: '14px', cursor: 'pointer' }}>{t('itin_title')}</button>
-              </div>
-            </>
-          )}
-
-        </div>
+        <Elements stripe={stripePromise}>
+          <CheckoutForm plan={plan} country={country} user={user} walletBalance={walletBalance} />
+        </Elements>
       </main>
+      <Footer />
     </div>
   );
 }
