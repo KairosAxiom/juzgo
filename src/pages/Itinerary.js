@@ -99,6 +99,7 @@ export default function Itinerary() {
   const [noAccommodation, setNoAccommodation] = useState(false);
   const [travelers, setTravelers] = useState(1);
   const [budget, setBudget] = useState('moderate');
+  const [perDayCount, setPerDayCount] = useState(3);
   const [interests, setInterests] = useState(['food', 'places']);
 
   const [recommendedPlaces, setRecommendedPlaces] = useState([]);
@@ -145,40 +146,34 @@ export default function Itinerary() {
 
     const cats = interests.map((id) => [...CATEGORIES, ...UNIQUE_CATS].find((c) => c.id === id)?.title).filter(Boolean).join(', ');
     const dayCount = tripDayCount();
+    const targetCount = Math.min(30, Math.max(6, dayCount * perDayCount));
     const accomLine = noAccommodation
       ? 'Accommodation not yet booked — feel free to suggest a well-located area to stay.'
       : accommodation ? `Staying at: ${accommodation}.` : '';
     const arrivalLine = arrivalTime ? `Arrival: ${dates.from} at ${arrivalTime}.` : '';
     const departureLine = departureTime ? `Departure: ${dates.to} at ${departureTime}.` : '';
 
-    const prompt = `You are a travel research assistant. For a ${dayCount}-day trip to ${destination}, recommend 15-20 specific real places matching these interests: ${cats || 'general sightseeing'}.
+    const prompt = `Recommend exactly ${targetCount} specific real places for a ${dayCount}-day trip to ${destination}, matching: ${cats || 'general sightseeing'}. Traveller wants about ${perDayCount} activities per day.
 ${arrivalLine}
 ${departureLine}
 ${accomLine}
 
-Respond with ONLY a valid JSON array, no markdown fences, no prose before or after. Each object must have exactly these fields:
-{
-  "id": "unique-slug-string",
-  "name": "Place name",
-  "type": "category like Restaurant, Museum, Park",
-  "description": "1-2 sentence description, max 25 words",
-  "trust": "michelin" | "unesco" | "tourism" | "tripadvisor" | "gem" | "ai",
-  "lat": latitude as a number,
-  "lng": longitude as a number,
-  "day": suggested day number 1 to ${dayCount}
-}
+Respond with ONLY a valid JSON array, no markdown fences, no prose. Each object:
+{"id":"slug","name":"Place name","type":"category","description":"max 20 words","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number,"day":1-${dayCount}}
 
-Use real, accurate coordinates for ${destination}. Use "michelin" only for actual Michelin-recognized restaurants, "unesco" only for actual UNESCO World Heritage sites, "tourism" for official tourism board recommended spots, "tripadvisor" for well-known traveller favorites, "gem" for genuine hidden local spots, and "ai" as fallback when source confidence is lower. Distribute places roughly evenly across the ${dayCount} days.`;
+Use real accurate coordinates. "michelin" only for actual Michelin recognition, "unesco" only for actual World Heritage sites, "tourism" for official board picks, "tripadvisor" for known traveller favorites, "gem" for genuine local spots, "ai" as fallback. Distribute evenly across ${dayCount} days, about ${perDayCount} per day.`;
 
     try {
       const res = await fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2500, messages: [{ role: 'user', content: prompt }] }),
       });
       const data = await res.json();
       const text = data.content?.[0]?.text || '';
       const parsed = parsePlacesJSON(text);
+      console.log('[Juzgo debug] Parsed places:', parsed);
+      window.__lastPlaces = parsed;
       if (parsed.length === 0) throw new Error('No places returned');
       setRecommendedPlaces(parsed);
     } catch (err) {
@@ -204,6 +199,8 @@ Use real, accurate coordinates for ${destination}. Use "michelin" only for actua
   /* ── Stage 3 → 4: build itinerary from chosen places ── */
   async function handleBuildItinerary(chosenPlaces) {
     setFinalPlaces(chosenPlaces);
+    console.log('[Juzgo debug] Final places sent to map:', chosenPlaces);
+    window.__finalPlaces = chosenPlaces;
     setStep(4);
     setItineraryLoading(true);
 
@@ -224,7 +221,9 @@ ${accomLine}
 Build the itinerary using ONLY these places, organizing them sensibly by day and time of day:
 ${placesList}
 
-Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening structure, and a short "Before You Go" tips section at the top. Keep it well-organized and practical. Do not invent additional must-see places beyond the list above, but you may add brief transport or timing tips between stops.`;
+Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening structure, and a short "Before You Go" tips section at the top. Keep it well-organized and practical. Do not invent additional must-see places beyond the list above, but you may add brief transport or timing tips between stops.
+
+IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should spend at each location — let them decide that for themselves. Only mention timing when referring to travel time between consecutive stops, phrased as "Travel time to next stop: ~X mins" (by the most sensible mode — walk, MRT, taxi, etc). Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
 
     setMessages([{ role: 'assistant', content: `Building your ${destination} itinerary…` }]);
 
@@ -232,7 +231,7 @@ Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening stru
       const res = await fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 3000, messages: [{ role: 'user', content: prompt }] }),
       });
       const data = await res.json();
       const text = data.content?.[0]?.text || "Sorry, I couldn't generate your itinerary. Please try again.";
@@ -365,6 +364,15 @@ Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening stru
                     </select>
                   </div>
                 </div>
+
+                <label className={styles.label}>Activities per day</label>
+                <select value={perDayCount} onChange={(e) => setPerDayCount(parseInt(e.target.value, 10))} className={styles.select}>
+                  <option value={2}>Relaxed — 2 per day</option>
+                  <option value={3}>Balanced — 3 per day</option>
+                  <option value={4}>Packed — 4 per day</option>
+                  <option value={5}>Action-packed — 5 per day</option>
+                </select>
+                <p className={styles.hint} style={{ marginBottom: 18 }}>This helps us research the right number of places and pace your schedule realistically.</p>
 
                 <button
                   className={styles.btnNext}
