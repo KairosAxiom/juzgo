@@ -18,10 +18,10 @@ const HOW_STEPS = [
 ];
 
 const DESTINATIONS = [
-  { city: 'Tokyo',     country: 'Japan',        from: '6.40', emoji: '🇯🇵' },
-  { city: 'Bali',      country: 'Indonesia',     from: '5.90', emoji: '🇮🇩' },
-  { city: 'Paris',     country: 'France',        from: '8.10', emoji: '🇫🇷' },
-  { city: 'Seoul',     country: 'South Korea',   from: '7.20', emoji: '🇰🇷' },
+  { country: 'Japan',       from: '6.40', emoji: '🇯🇵' },
+  { country: 'Indonesia',   from: '5.90', emoji: '🇮🇩' },
+  { country: 'France',      from: '8.10', emoji: '🇫🇷' },
+  { country: 'South Korea', from: '7.20', emoji: '🇰🇷' },
 ];
 
 const ITIN_POINTS = [
@@ -112,12 +112,12 @@ export default function Home() {
           </div>
           <div className={styles.destGrid}>
             {DESTINATIONS.map((d) => (
-              <div key={d.city} className={styles.destCard} onClick={() => navigate('/plans')}>
+              <div key={d.country} className={styles.destCard} onClick={() => navigate('/plans')}>
                 <div className={styles.destOverlay} />
                 <div className={styles.destEmoji}>{d.emoji}</div>
                 <div className={styles.destInfo}>
-                  <div className={styles.destCity}>{d.city}</div>
-                  <div className={styles.destMeta}>{d.country} · FROM SGD {d.from}</div>
+                  <div className={styles.destCity}>{d.country}</div>
+                  <div className={styles.destMeta}>FROM SGD {d.from}</div>
                 </div>
               </div>
             ))}
