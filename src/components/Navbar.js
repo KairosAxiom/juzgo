@@ -43,11 +43,17 @@ export default function Navbar() {
       <div className={styles.inner}>
         {/* Logo */}
         <Link to="/" className={styles.logo} onClick={() => setMenuOpen(false)}>
-          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#2A6FDB" strokeWidth="1.4">
-            <circle cx="12" cy="12" r="9.5" />
-            <ellipse cx="12" cy="12" rx="4" ry="9.5" />
-            <line x1="2.5" y1="12" x2="21.5" y2="12" />
-          </svg>
+          <div className={styles.globeWrap}>
+            <svg className={styles.globeSvg} width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <circle cx="16" cy="16" r="14" stroke="#2A6FDB" strokeWidth="1.4" fill="rgba(42,111,219,0.08)" />
+              <ellipse cx="16" cy="16" rx="5.5" ry="14" stroke="#2A6FDB" strokeWidth="1" strokeDasharray="2 2" className={styles.globeLon} />
+              <ellipse cx="16" cy="16" rx="14" ry="5.5" stroke="#2A6FDB" strokeWidth="1" strokeDasharray="2 2" className={styles.globeLat} />
+              <line x1="2" y1="16" x2="30" y2="16" stroke="#2A6FDB" strokeWidth="1" opacity="0.5" />
+            </svg>
+            <div className={styles.globeOrbit}>
+              <div className={styles.globeDot} />
+            </div>
+          </div>
           <span className={styles.logoText}>Juzgo</span>
         </Link>
 

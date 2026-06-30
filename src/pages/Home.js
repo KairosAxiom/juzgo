@@ -2,7 +2,6 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
-import AnimatedGlobe from '../components/AnimatedGlobe';
 import styles from './Home.module.css';
 
 const STATS = [
@@ -73,7 +72,11 @@ export default function Home() {
 
           {/* Hero visual placeholder */}
           <div className={styles.heroVisual}>
-            <AnimatedGlobe />
+            <img
+              src="/images/hero.png"
+              alt="Stay connected everywhere you travel"
+              className={styles.heroImg}
+            />
           </div>
         </div>
       </section>
