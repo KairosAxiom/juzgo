@@ -446,3 +446,15 @@
   .summaryRow { gap: 6px; }
   .summaryItem { font-size: 11px; padding: 4px 10px; }
 }
+
+/* ── Accommodation checkbox row ── */
+.checkboxRow {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: #5B6B62; cursor: pointer;
+  margin: 10px 0 18px;
+}
+
+.checkboxInput {
+  width: 17px; height: 17px; accent-color: #1E8E5E; cursor: pointer;
+  flex-shrink: 0;
+}

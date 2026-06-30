@@ -32,6 +32,10 @@ export default function Itinerary() {
   const [step, setStep] = useState(1); // 1=details, 2=interests, 3=place picker, 4=itinerary+map
   const [destination, setDestination] = useState('');
   const [dates, setDates] = useState({ from: '', to: '' });
+  const [arrivalTime, setArrivalTime] = useState('');
+  const [departureTime, setDepartureTime] = useState('');
+  const [accommodation, setAccommodation] = useState('');
+  const [noAccommodation, setNoAccommodation] = useState(false);
   const [travelers, setTravelers] = useState(1);
   const [budget, setBudget] = useState('moderate');
   const [interests, setInterests] = useState(['food', 'places']);
@@ -80,8 +84,16 @@ export default function Itinerary() {
 
     const cats = interests.map((id) => [...CATEGORIES, ...UNIQUE_CATS].find((c) => c.id === id)?.title).filter(Boolean).join(', ');
     const dayCount = tripDayCount();
+    const accomLine = noAccommodation
+      ? 'Accommodation not yet booked — feel free to suggest a well-located area to stay.'
+      : accommodation ? `Staying at: ${accommodation}.` : '';
+    const arrivalLine = arrivalTime ? `Arrival: ${dates.from} at ${arrivalTime}.` : '';
+    const departureLine = departureTime ? `Departure: ${dates.to} at ${departureTime}.` : '';
 
     const prompt = `You are a travel research assistant. For a ${dayCount}-day trip to ${destination}, recommend 15-20 specific real places matching these interests: ${cats || 'general sightseeing'}.
+${arrivalLine}
+${departureLine}
+${accomLine}
 
 Respond with ONLY a valid JSON array, no markdown fences, no prose before or after. Each object must have exactly these fields:
 {
@@ -136,9 +148,17 @@ Use real, accurate coordinates for ${destination}. Use "michelin" only for actua
 
     const dayCount = tripDayCount();
     const placesList = chosenPlaces.map((p) => `- ${p.name} (${p.type}, suggested Day ${p.day || '?'})`).join('\n');
+    const accomLine = noAccommodation
+      ? 'Accommodation is not yet booked — suggest a well-located area to stay and factor in flexible timing for Day 1.'
+      : accommodation ? `Staying at: ${accommodation}. Factor travel time to/from this location into the schedule.` : '';
+    const arrivalLine = arrivalTime ? `Arrival: ${dates.from} at ${arrivalTime} — Day 1 should start realistically after arrival, factoring in immigration, baggage, and transit to accommodation.` : '';
+    const departureLine = departureTime ? `Departure: ${dates.to} at ${departureTime} — the final day should end with enough buffer time to reach the airport/departure point.` : '';
 
     const prompt = `You are a travel guide creating a detailed day-by-day itinerary for ${destination}.
 Trip length: ${dayCount} days (${dates.from || 'flexible'} to ${dates.to || 'flexible'}). Travelers: ${travelers}. Budget: ${budget}.
+${arrivalLine}
+${departureLine}
+${accomLine}
 
 Build the itinerary using ONLY these places, organizing them sensibly by day and time of day:
 ${placesList}
@@ -230,14 +250,44 @@ Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening stru
 
                 <div className={styles.twoCol}>
                   <div>
-                    <label className={styles.label}>From</label>
+                    <label className={styles.label}>Arrival date</label>
                     <input type="date" value={dates.from} onChange={(e) => setDates((d) => ({ ...d, from: e.target.value }))} className={styles.input} />
                   </div>
                   <div>
-                    <label className={styles.label}>To</label>
-                    <input type="date" value={dates.to} onChange={(e) => setDates((d) => ({ ...d, to: e.target.value }))} className={styles.input} />
+                    <label className={styles.label}>Arrival time</label>
+                    <input type="time" value={arrivalTime} onChange={(e) => setArrivalTime(e.target.value)} className={styles.input} />
                   </div>
                 </div>
+
+                <div className={styles.twoCol}>
+                  <div>
+                    <label className={styles.label}>Departure date</label>
+                    <input type="date" value={dates.to} onChange={(e) => setDates((d) => ({ ...d, to: e.target.value }))} className={styles.input} />
+                  </div>
+                  <div>
+                    <label className={styles.label}>Departure time</label>
+                    <input type="time" value={departureTime} onChange={(e) => setDepartureTime(e.target.value)} className={styles.input} />
+                  </div>
+                </div>
+
+                <label className={styles.label}>Where are you staying?</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Marina Bay Sands, or a neighbourhood"
+                  value={accommodation}
+                  onChange={(e) => setAccommodation(e.target.value)}
+                  className={styles.input}
+                  disabled={noAccommodation}
+                />
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    checked={noAccommodation}
+                    onChange={(e) => { setNoAccommodation(e.target.checked); if (e.target.checked) setAccommodation(''); }}
+                    className={styles.checkboxInput}
+                  />
+                  <span>Nothing booked yet — suggest a good area to stay</span>
+                </label>
 
                 <div className={styles.twoCol}>
                   <div>
