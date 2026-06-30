@@ -13,6 +13,11 @@ export default function Login() {
   const [searchParams] = useSearchParams();
   const { lang, t } = useLang();
 
+  const [forgotMode, setForgotMode] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetError, setResetError] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+
   async function handleLogin(e) {
     e.preventDefault();
     setError('');
@@ -22,6 +27,19 @@ export default function Login() {
     if (err) { setError(err.message); return; }
     const redirect = searchParams.get('redirect');
     navigate(redirect === 'itinerary' ? '/itinerary' : '/dashboard');
+  }
+
+  async function handleForgotPassword(e) {
+    e.preventDefault();
+    setResetError('');
+    if (!email.trim()) { setResetError('Enter your email above first, then click Forgot password again.'); return; }
+    setResetLoading(true);
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/login`,
+    });
+    setResetLoading(false);
+    if (err) { setResetError(err.message); return; }
+    setResetSent(true);
   }
 
   return (
@@ -84,8 +102,17 @@ export default function Login() {
           </form>
 
           <div className={styles.forgotWrap}>
-            <span className={styles.forgot}>Forgot password?</span>
+            {resetSent ? (
+              <span className={styles.forgot} style={{ color: '#1E8E5E', cursor: 'default' }}>
+                ✓ Reset link sent — check your email
+              </span>
+            ) : (
+              <span className={styles.forgot} onClick={handleForgotPassword} style={{ opacity: resetLoading ? 0.6 : 1 }}>
+                {resetLoading ? 'Sending…' : 'Forgot password?'}
+              </span>
+            )}
           </div>
+          {resetError && <div className={styles.error}>{resetError}</div>}
 
           <p className={styles.switchText}>
             No account? <Link to="/register" className={styles.switchLink}>Create one</Link>
