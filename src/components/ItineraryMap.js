@@ -85,8 +85,8 @@ export default function ItineraryMap({ places, days }) {
       const lng = toNum(place.lng);
       const color = DAY_COLORS[((place.day || 1) - 1) % DAY_COLORS.length];
       const icon = L.divIcon({
-        className: styles.customMarker,
-        html: `<div style="background:${color}" class="${styles.markerPin}"></div>`,
+        className: 'juzgo-marker-wrap',
+        html: `<div style="background:${color}" class="juzgo-marker-pin"></div>`,
         iconSize: [22, 22],
         iconAnchor: [11, 22],
       });

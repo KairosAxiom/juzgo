@@ -534,6 +534,17 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
                 Send →
               </button>
             </form>
+
+            {/* Bottom action bar — decision point after reviewing the itinerary */}
+            <div className={styles.bottomActions}>
+              <p className={styles.bottomPrompt}>Happy with this plan?</p>
+              <div className={styles.bottomBtnRow}>
+                <button className={styles.btnSaveBig} onClick={saveItinerary}>💾 Save itinerary</button>
+                <button className={styles.btnPrintBig} onClick={() => window.print()}>🖨️ Print</button>
+                <button className={styles.btnReplanBig} onClick={() => setStep(3)}>↺ Re-plan places</button>
+                <button className={styles.btnRestartBig} onClick={resetAll}>+ Start a new trip</button>
+              </div>
+            </div>
           </div>
         )}
 

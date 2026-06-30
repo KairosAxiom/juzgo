@@ -508,3 +508,97 @@
   margin-bottom: 5px;
   line-height: 1.5;
 }
+
+/* ── Bottom action bar (decision point) ── */
+.bottomActions {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid #E2E9E5;
+  text-align: center;
+}
+
+.bottomPrompt {
+  font-family: 'Newsreader', serif;
+  font-size: 18px;
+  color: #16271E;
+  margin: 0 0 16px;
+}
+
+.bottomBtnRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btnSaveBig {
+  background: #1E8E5E;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: background .18s;
+}
+.btnSaveBig:hover { background: #15734B; }
+
+.btnPrintBig {
+  background: #fff;
+  border: 1px solid #E2E9E5;
+  border-radius: 999px;
+  padding: 13px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #3A4A41;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: border-color .15s;
+}
+.btnPrintBig:hover { border-color: #16271E; }
+
+.btnReplanBig {
+  background: #EAF1FB;
+  border: 1px solid #CFE0F7;
+  border-radius: 999px;
+  padding: 13px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #2A6FDB;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: background .15s;
+}
+.btnReplanBig:hover { background: #DCE9FA; }
+
+.btnRestartBig {
+  background: none;
+  border: 1px solid #E2E9E5;
+  border-radius: 999px;
+  padding: 13px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #5B6B62;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: border-color .15s, color .15s;
+}
+.btnRestartBig:hover { border-color: #1E8E5E; color: #1E8E5E; }
+
+/* Print-friendly: hide chrome, show only itinerary content */
+@media print {
+  .bottomActions,
+  .chatForm,
+  .chatActions,
+  .dayTabs,
+  .chatHeader button {
+    display: none !important;
+  }
+}
+
+@media (max-width: 600px) {
+  .bottomBtnRow { flex-direction: column; }
+  .btnSaveBig, .btnPrintBig, .btnReplanBig, .btnRestartBig { width: 100%; }
+}

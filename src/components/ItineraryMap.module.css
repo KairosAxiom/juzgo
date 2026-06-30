@@ -47,16 +47,17 @@
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Custom marker pin (rendered via divIcon) */
-:global(.customMarker) { background: transparent; border: none; }
+/* Custom marker pin (rendered via divIcon — plain global class names, not CSS-module-scoped) */
+:global(.juzgo-marker-wrap) { background: transparent; border: none; }
 
-:global(.markerPin) {
+:global(.juzgo-marker-pin) {
   width: 22px;
   height: 22px;
   border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
   border: 2px solid #fff;
   box-shadow: 0 2px 6px rgba(0,0,0,.35);
+  display: block;
 }
 
 /* Leaflet popup styling overrides */
