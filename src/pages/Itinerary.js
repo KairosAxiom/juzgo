@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
+import PlacePicker from '../components/PlacePicker';
+import ItineraryMap from '../components/ItineraryMap';
 import styles from './Itinerary.module.css';
 
 const CATEGORIES = [
@@ -24,19 +26,29 @@ const UNIQUE_CATS = [
   { id: 'foodcrawl', emoji: '🥢', title: 'Local Food Crawls',    desc: 'Curated tastings, market to table' },
 ];
 
+const PROXY_URL = 'https://claude-proxy.kairosventure-io.workers.dev/';
+
 export default function Itinerary() {
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(1); // 1=details, 2=interests, 3=place picker, 4=itinerary+map
   const [destination, setDestination] = useState('');
   const [dates, setDates] = useState({ from: '', to: '' });
   const [travelers, setTravelers] = useState(1);
   const [budget, setBudget] = useState('moderate');
   const [interests, setInterests] = useState(['food', 'places']);
+
+  const [recommendedPlaces, setRecommendedPlaces] = useState([]);
+  const [finalPlaces, setFinalPlaces] = useState([]);
+  const [placesLoading, setPlacesLoading] = useState(false);
+  const [placesError, setPlacesError] = useState('');
+
+  const [itineraryLoading, setItineraryLoading] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+
   const [user, setUser] = useState(null);
   const chatRef = useRef(null);
-  const { lang, t } = useLang();
+  const { lang } = useLang();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -51,45 +63,115 @@ export default function Itinerary() {
     setInterests((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   }
 
-  async function handleGenerate() {
+  function tripDayCount() {
+    if (!dates.from || !dates.to) return 3;
+    const d1 = new Date(dates.from);
+    const d2 = new Date(dates.to);
+    const diff = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
+    return diff > 0 ? diff : 3;
+  }
+
+  /* ── Stage 2 → 3: fetch recommended places ── */
+  async function handleFetchPlaces() {
     if (!destination.trim()) return;
+    setPlacesError('');
+    setPlacesLoading(true);
     setStep(3);
-    const prompt = buildPrompt();
-    setMessages([{ role: 'assistant', content: `I'll build your ${destination} itinerary now…` }]);
-    setLoading(true);
+
+    const cats = interests.map((id) => [...CATEGORIES, ...UNIQUE_CATS].find((c) => c.id === id)?.title).filter(Boolean).join(', ');
+    const dayCount = tripDayCount();
+
+    const prompt = `You are a travel research assistant. For a ${dayCount}-day trip to ${destination}, recommend 15-20 specific real places matching these interests: ${cats || 'general sightseeing'}.
+
+Respond with ONLY a valid JSON array, no markdown fences, no prose before or after. Each object must have exactly these fields:
+{
+  "id": "unique-slug-string",
+  "name": "Place name",
+  "type": "category like Restaurant, Museum, Park",
+  "description": "1-2 sentence description, max 25 words",
+  "trust": "michelin" | "unesco" | "tourism" | "tripadvisor" | "gem" | "ai",
+  "lat": latitude as a number,
+  "lng": longitude as a number,
+  "day": suggested day number 1 to ${dayCount}
+}
+
+Use real, accurate coordinates for ${destination}. Use "michelin" only for actual Michelin-recognized restaurants, "unesco" only for actual UNESCO World Heritage sites, "tourism" for official tourism board recommended spots, "tripadvisor" for well-known traveller favorites, "gem" for genuine hidden local spots, and "ai" as fallback when source confidence is lower. Distribute places roughly evenly across the ${dayCount} days.`;
+
     try {
-      const res = await fetch('https://claude-proxy.kairosventure-io.workers.dev/', {
+      const res = await fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: [{ role: 'user', content: prompt }] }),
       });
       const data = await res.json();
-      const text = data.content?.[0]?.text || 'Sorry, I couldn\'t generate your itinerary. Please try again.';
+      const text = data.content?.[0]?.text || '';
+      const parsed = parsePlacesJSON(text);
+      if (parsed.length === 0) throw new Error('No places returned');
+      setRecommendedPlaces(parsed);
+    } catch (err) {
+      setPlacesError('We had trouble researching places for this destination. Please try again.');
+    }
+    setPlacesLoading(false);
+  }
+
+  function parsePlacesJSON(text) {
+    try {
+      const cleaned = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      const match = text.match(/\[[\s\S]*\]/);
+      if (match) {
+        try { return JSON.parse(match[0]); } catch { return []; }
+      }
+      return [];
+    }
+  }
+
+  /* ── Stage 3 → 4: build itinerary from chosen places ── */
+  async function handleBuildItinerary(chosenPlaces) {
+    setFinalPlaces(chosenPlaces);
+    setStep(4);
+    setItineraryLoading(true);
+
+    const dayCount = tripDayCount();
+    const placesList = chosenPlaces.map((p) => `- ${p.name} (${p.type}, suggested Day ${p.day || '?'})`).join('\n');
+
+    const prompt = `You are a travel guide creating a detailed day-by-day itinerary for ${destination}.
+Trip length: ${dayCount} days (${dates.from || 'flexible'} to ${dates.to || 'flexible'}). Travelers: ${travelers}. Budget: ${budget}.
+
+Build the itinerary using ONLY these places, organizing them sensibly by day and time of day:
+${placesList}
+
+Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening structure, and a short "Before You Go" tips section at the top. Keep it well-organized and practical. Do not invent additional must-see places beyond the list above, but you may add brief transport or timing tips between stops.`;
+
+    setMessages([{ role: 'assistant', content: `Building your ${destination} itinerary…` }]);
+
+    try {
+      const res = await fetch(PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: [{ role: 'user', content: prompt }] }),
+      });
+      const data = await res.json();
+      const text = data.content?.[0]?.text || "Sorry, I couldn't generate your itinerary. Please try again.";
       setMessages([{ role: 'assistant', content: text }]);
     } catch {
       setMessages([{ role: 'assistant', content: 'Something went wrong. Please try again.' }]);
     }
-    setLoading(false);
-  }
-
-  function buildPrompt() {
-    const cats = interests.map((id) => [...CATEGORIES, ...UNIQUE_CATS].find((c) => c.id === id)?.title).filter(Boolean).join(', ');
-    return `You are a knowledgeable travel guide for ${destination}. Create a detailed day-by-day itinerary.
-Dates: ${dates.from || 'flexible'} to ${dates.to || 'flexible'}. Travelers: ${travelers}. Budget: ${budget}.
-Interests: ${cats || 'general sightseeing'}.
-Rules: Only real, verified places with accurate addresses. No hallucinations. Include opening hours, entry prices, and transport tips. Format clearly with day headings.`;
+    setItineraryLoading(false);
   }
 
   async function handleChat(e) {
     e.preventDefault();
-    if (!input.trim() || loading) return;
+    if (!input.trim() || chatLoading) return;
     const userMsg = { role: 'user', content: input.trim() };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
-    setLoading(true);
+    setChatLoading(true);
     try {
       const history = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }));
-      const res = await fetch('https://claude-proxy.kairosventure-io.workers.dev/', {
+      const res = await fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: history }),
@@ -100,7 +182,7 @@ Rules: Only real, verified places with accurate addresses. No hallucinations. In
     } catch {
       setMessages((prev) => [...prev, { role: 'assistant', content: 'Connection error. Please try again.' }]);
     }
-    setLoading(false);
+    setChatLoading(false);
   }
 
   async function saveItinerary() {
@@ -109,6 +191,17 @@ Rules: Only real, verified places with accurate addresses. No hallucinations. In
     await supabase.from('saved_itineraries').insert({ user_id: user.id, destination, content, created_at: new Date() });
     alert('Itinerary saved!');
   }
+
+  function resetAll() {
+    setStep(1);
+    setMessages([]);
+    setDestination('');
+    setRecommendedPlaces([]);
+    setFinalPlaces([]);
+  }
+
+  const dayCount = tripDayCount();
+  const dayNumbers = Array.from({ length: dayCount }, (_, i) => i + 1);
 
   return (
     <div className={styles.page}>
@@ -189,7 +282,7 @@ Rules: Only real, verified places with accurate addresses. No hallucinations. In
             <button className={styles.btnBack} onClick={() => setStep(1)}>← Back</button>
             <div className={styles.eyebrow} style={{ marginTop: 20 }}>Personalise</div>
             <h1 className={styles.h1}>What do you love?</h1>
-            <p className={styles.sub}>Select your interests and we'll tailor the itinerary around them.</p>
+            <p className={styles.sub}>Select your interests and we'll research places that match.</p>
 
             <div className={styles.catSection}>
               <div className={styles.catHeading}>Experiences</div>
@@ -237,27 +330,60 @@ Rules: Only real, verified places with accurate addresses. No hallucinations. In
               </div>
             </div>
 
-            <button className={styles.btnGenerate} onClick={handleGenerate}>
-              Build my itinerary →
+            <button className={styles.btnGenerate} onClick={handleFetchPlaces}>
+              Research places to visit →
             </button>
           </div>
         )}
 
-        {/* ── Step 3: Chat / itinerary ── */}
+        {/* ── Step 3: Place picker ── */}
         {step === 3 && (
+          <>
+            {placesLoading ? (
+              <div className={styles.placesLoadingWrap}>
+                <div className={styles.spinnerBig} />
+                <p className={styles.loadingText}>Researching the best places in {destination}…</p>
+              </div>
+            ) : placesError ? (
+              <div className={styles.errorWrap}>
+                <p className={styles.errorText}>{placesError}</p>
+                <button className={styles.btnGenerate} onClick={handleFetchPlaces}>Try again</button>
+              </div>
+            ) : (
+              <PlacePicker
+                destination={destination}
+                places={recommendedPlaces}
+                onConfirm={handleBuildItinerary}
+                onBack={() => setStep(2)}
+                loading={itineraryLoading}
+              />
+            )}
+          </>
+        )}
+
+        {/* ── Step 4: Itinerary + Map ── */}
+        {step === 4 && (
           <div className={styles.chatWrap}>
             <div className={styles.chatHeader}>
               <div>
                 <div className={styles.eyebrow}>Your itinerary</div>
                 <h1 className={styles.chatH1}>{destination}</h1>
+                <div className={styles.summaryRow}>
+                  <span className={styles.summaryItem}>📅 {dayCount} days</span>
+                  <span className={styles.summaryItem}>👥 {travelers} traveller{travelers > 1 ? 's' : ''}</span>
+                  <span className={styles.summaryItem}>💰 {budget}</span>
+                  <span className={styles.summaryItem}>📍 {finalPlaces.length} places</span>
+                </div>
               </div>
               <div className={styles.chatActions}>
                 <button className={styles.btnSave} onClick={saveItinerary}>Save itinerary</button>
-                <button className={styles.btnRestart} onClick={() => { setStep(1); setMessages([]); setDestination(''); }}>
-                  New trip
-                </button>
+                <button className={styles.btnRestart} onClick={resetAll}>New trip</button>
               </div>
             </div>
+
+            {finalPlaces.some((p) => p.lat && p.lng) && (
+              <ItineraryMap places={finalPlaces} days={dayNumbers} />
+            )}
 
             <div className={styles.chat} ref={chatRef}>
               {messages.map((m, i) => (
@@ -269,7 +395,7 @@ Rules: Only real, verified places with accurate addresses. No hallucinations. In
                   </div>
                 </div>
               ))}
-              {loading && (
+              {itineraryLoading && (
                 <div className={`${styles.msg} ${styles.msgBot}`}>
                   <div className={styles.msgBubble}>
                     <div className={styles.typingDots}><span /><span /><span /></div>
@@ -285,9 +411,9 @@ Rules: Only real, verified places with accurate addresses. No hallucinations. In
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 className={styles.chatInput}
-                disabled={loading}
+                disabled={chatLoading}
               />
-              <button type="submit" className={styles.chatSend} disabled={loading || !input.trim()}>
+              <button type="submit" className={styles.chatSend} disabled={chatLoading || !input.trim()}>
                 Send →
               </button>
             </form>

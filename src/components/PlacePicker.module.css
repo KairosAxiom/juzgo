@@ -1,0 +1,169 @@
+/* PlacePicker.module.css — Juzgo refresh */
+
+.wrap { max-width: 1000px; margin: 0 auto; }
+
+.btnBack {
+  background: none; border: none;
+  color: #5B6B62; font-size: 14px; font-weight: 600;
+  cursor: pointer; font-family: 'Hanken Grotesk', sans-serif; padding: 0;
+}
+.btnBack:hover { color: #16271E; }
+
+.eyebrow {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px; letter-spacing: .24em; text-transform: uppercase;
+  color: #2A6FDB; margin-bottom: 14px;
+}
+
+.h1 {
+  font-family: 'Newsreader', serif; font-weight: 500;
+  font-size: clamp(32px, 4.5vw, 48px); letter-spacing: -.02em;
+  color: #16271E; margin: 0 0 14px;
+}
+
+.sub {
+  font-size: 16px; line-height: 1.6; color: #5B6B62;
+  margin: 0 0 28px; max-width: 64ch;
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  background: #F1F6F3; border: 1px solid #E2E9E5; border-radius: 14px;
+  padding: 14px 20px; margin-bottom: 24px;
+}
+
+.selectAllRow {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; font-weight: 600; color: #16271E; cursor: pointer;
+}
+
+.checkbox { width: 18px; height: 18px; accent-color: #1E8E5E; cursor: pointer; }
+
+.countBadge {
+  font-family: 'DM Mono', monospace; font-size: 12px;
+  letter-spacing: .06em; color: #6A7A70;
+}
+
+/* Card grid */
+.grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+  margin-bottom: 24px;
+}
+
+.card {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: #fff; border: 1px solid #E2E9E5; border-radius: 16px;
+  padding: 18px; cursor: pointer; position: relative;
+  transition: border-color .15s, background .15s;
+}
+.card:hover { border-color: #1E8E5E; }
+.cardChecked { border: 1.5px solid #1E8E5E; background: #F0F7F3; }
+.cardCustom { background: #EAF1FB; border-color: #CFE0F7; }
+
+.checkboxBig {
+  width: 22px; height: 22px; flex-shrink: 0; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; margin-top: 2px;
+  border: 2px solid #CFD9D3; background: #fff; color: transparent;
+  transition: all .15s; cursor: pointer;
+}
+.checkboxBigActive { background: #1E8E5E; color: #fff; border-color: #1E8E5E; }
+
+.cardBody { flex: 1; min-width: 0; }
+
+.cardTop {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 6px;
+}
+
+.cardType {
+  font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .12em;
+  text-transform: uppercase; color: #6A7A70;
+}
+
+.dayTag {
+  font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .08em;
+  background: #EAF4EE; color: #1E8E5E; border-radius: 999px; padding: 2px 8px;
+}
+
+.cardName {
+  font-size: 16px; font-weight: 700; color: #16271E; margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.cardDesc {
+  font-size: 13px; line-height: 1.5; color: #5B6B62; margin: 0 0 10px;
+}
+
+/* Trust badges */
+.trustBadge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; border-radius: 999px;
+  padding: 4px 10px;
+}
+.badgeMichelin    { background: #FEF2D9; color: #B07D00; }
+.badgeUnesco      { background: #EAF1FB; color: #2A6FDB; }
+.badgeTourism     { background: #EAF4EE; color: #1E8E5E; }
+.badgeTripadvisor { background: #E8F6EF; color: #00A86B; }
+.badgeGem         { background: #F3EAFB; color: #8A4FD1; }
+.badgeAi          { background: #F1F6F3; color: #6A7A70; }
+
+.removeBtn {
+  position: absolute; top: 10px; right: 10px;
+  background: #fff; border: 1px solid #CFE0F7; border-radius: 50%;
+  width: 22px; height: 22px; font-size: 11px; color: #6A7A70; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.removeBtn:hover { border-color: #E55A5A; color: #E55A5A; }
+
+/* Add your own */
+.addCard {
+  background: #F4F8F6; border: 1px solid #E2E9E5; border-radius: 16px;
+  padding: 20px; margin-bottom: 28px;
+}
+
+.addLabel { font-size: 14px; font-weight: 600; color: #3A4A41; margin-bottom: 10px; }
+
+.addRow { display: flex; gap: 8px; }
+
+.addInput {
+  flex: 1; background: #fff; border: 1px solid #E2E9E5; border-radius: 10px;
+  padding: 12px 14px; font-size: 14px; color: #16271E; outline: none;
+  font-family: 'Hanken Grotesk', sans-serif; transition: border-color .15s;
+}
+.addInput:focus { border-color: #1E8E5E; }
+
+.addBtn {
+  background: #1E8E5E; color: #fff; border: none; border-radius: 10px;
+  padding: 12px 22px; font-size: 14px; font-weight: 600; cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif; white-space: nowrap;
+  transition: background .15s;
+}
+.addBtn:hover { background: #15734B; }
+
+/* Confirm button */
+.btnConfirm {
+  width: 100%; background: #1E8E5E; color: #fff; border: none;
+  border-radius: 999px; padding: 17px; font-size: 16px; font-weight: 600;
+  cursor: pointer; font-family: 'Hanken Grotesk', sans-serif;
+  transition: background .18s;
+}
+.btnConfirm:hover { background: #15734B; }
+.btnConfirm:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── Responsive ── */
+@media (max-width: 700px) {
+  .grid { grid-template-columns: 1fr; }
+  .toolbar { flex-direction: column; align-items: flex-start; }
+  .addRow { flex-direction: column; }
+  .addBtn { width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .h1 { font-size: 28px; }
+  .sub { font-size: 14px; }
+  .card { padding: 14px; gap: 10px; }
+  .cardName { font-size: 15px; }
+}

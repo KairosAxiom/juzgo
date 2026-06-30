@@ -1,0 +1,79 @@
+/* ItineraryMap.module.css — Juzgo refresh */
+
+.wrap { margin-bottom: 28px; }
+
+/* Day tabs */
+.dayTabs {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;
+}
+
+.dayTab {
+  display: flex; align-items: center; gap: 7px;
+  background: #F1F6F3; border: 1px solid #E2E9E5; border-radius: 999px;
+  padding: 8px 16px; font-size: 13px; font-weight: 600; color: #3A4A41;
+  cursor: pointer; font-family: 'Hanken Grotesk', sans-serif;
+  transition: all .15s;
+}
+.dayTab:hover { border-color: #1E8E5E; }
+
+.dayTabActive {
+  color: #fff; border-color: transparent;
+}
+
+.dayDot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+/* Map container */
+.mapBox {
+  width: 100%;
+  height: 420px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid #E2E9E5;
+  position: relative;
+  background: #F1F6F3;
+}
+
+.mapLoading {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid #E2E9E5; border-top-color: #1E8E5E;
+  border-radius: 50%; animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Custom marker pin (rendered via divIcon) */
+:global(.customMarker) { background: transparent; border: none; }
+
+:global(.markerPin) {
+  width: 22px;
+  height: 22px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.35);
+}
+
+/* Leaflet popup styling overrides */
+:global(.leaflet-popup-content-wrapper) {
+  border-radius: 12px;
+  font-family: 'Hanken Grotesk', sans-serif;
+}
+
+:global(.leaflet-popup-content) {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 10px 14px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .mapBox { height: 300px; border-radius: 14px; }
+  .dayTabs { gap: 6px; }
+  .dayTab { padding: 7px 12px; font-size: 12px; }
+}
