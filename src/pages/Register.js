@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useLang } from '../lib/i18n';
 import styles from './Auth.module.css';
@@ -12,6 +12,7 @@ export default function Register() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { lang, t } = useLang();
 
   const passwordStrength = () => {
@@ -35,7 +36,8 @@ export default function Register() {
     });
     setLoading(false);
     if (err) { setError(err.message); return; }
-    navigate('/login-success');
+    const redirect = searchParams.get('redirect');
+    navigate(redirect ? `/login-success?redirect=${redirect}` : '/login-success');
   }
 
   return (

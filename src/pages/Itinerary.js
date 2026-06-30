@@ -265,12 +265,48 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
     setChatLoading(false);
   }
 
+  const PENDING_KEY = 'juzgo_pending_itinerary';
+
   async function saveItinerary() {
-    if (!user) { navigate('/login'); return; }
     const content = messages.find((m) => m.role === 'assistant')?.content || '';
+    if (!user) {
+      // Persist everything needed to resume after login/register
+      sessionStorage.setItem(PENDING_KEY, JSON.stringify({
+        destination, content, step, finalPlaces, dates, travelers, budget,
+      }));
+      navigate('/login?redirect=itinerary');
+      return;
+    }
     await supabase.from('saved_itineraries').insert({ user_id: user.id, destination, content, created_at: new Date() });
+    sessionStorage.removeItem(PENDING_KEY);
     alert('Itinerary saved!');
   }
+
+  // Restore a pending itinerary (e.g. after returning from login/register) and auto-save once authenticated
+  useEffect(() => {
+    if (!user) return;
+    const pending = sessionStorage.getItem(PENDING_KEY);
+    if (!pending) return;
+    try {
+      const data = JSON.parse(pending);
+      setDestination(data.destination || '');
+      setFinalPlaces(data.finalPlaces || []);
+      setDates(data.dates || { from: '', to: '' });
+      setTravelers(data.travelers || 1);
+      setBudget(data.budget || 'moderate');
+      setMessages([{ role: 'assistant', content: data.content || '' }]);
+      setStep(4);
+      // Auto-save now that the user is logged in
+      supabase.from('saved_itineraries').insert({
+        user_id: user.id, destination: data.destination, content: data.content, created_at: new Date(),
+      }).then(() => {
+        sessionStorage.removeItem(PENDING_KEY);
+        alert('Welcome back! Your itinerary has been saved.');
+      });
+    } catch {
+      sessionStorage.removeItem(PENDING_KEY);
+    }
+  }, [user]);
 
   function resetAll() {
     setStep(1);

@@ -78,3 +78,8 @@
   .dayTabs { gap: 6px; }
   .dayTab { padding: 7px 12px; font-size: 12px; }
 }
+
+/* Hide Leaflet's flag icon in attribution, keep required OSM credit text */
+:global(.leaflet-attribution-flag) {
+  display: none !important;
+}
