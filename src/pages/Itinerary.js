@@ -28,6 +28,67 @@ const UNIQUE_CATS = [
 
 const PROXY_URL = 'https://claude-proxy.kairosventure-io.workers.dev/';
 
+/* Lightweight markdown renderer for chat bubbles — headers, bold, rules, blockquotes, lists */
+function renderMarkdown(text) {
+  const lines = text.split('\n');
+  const blocks = [];
+  let listBuffer = [];
+
+  function flushList() {
+    if (listBuffer.length > 0) {
+      blocks.push(<ul key={`list-${blocks.length}`} className="md-list">{listBuffer}</ul>);
+      listBuffer = [];
+    }
+  }
+
+  function renderInline(str, key) {
+    const parts = str.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, i) =>
+      part.startsWith('**') && part.endsWith('**')
+        ? <strong key={`${key}-${i}`}>{part.slice(2, -2)}</strong>
+        : <React.Fragment key={`${key}-${i}`}>{part}</React.Fragment>
+    );
+  }
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+
+    if (trimmed === '') {
+      flushList();
+      return; // collapse blank lines instead of stacking <br>
+    }
+    if (/^---+$/.test(trimmed)) {
+      flushList();
+      blocks.push(<hr key={idx} className="md-rule" />);
+      return;
+    }
+    if (trimmed.startsWith('## ')) {
+      flushList();
+      blocks.push(<h3 key={idx} className="md-h3">{renderInline(trimmed.slice(3), idx)}</h3>);
+      return;
+    }
+    if (trimmed.startsWith('# ')) {
+      flushList();
+      blocks.push(<h2 key={idx} className="md-h2">{renderInline(trimmed.slice(2), idx)}</h2>);
+      return;
+    }
+    if (trimmed.startsWith('> ')) {
+      flushList();
+      blocks.push(<blockquote key={idx} className="md-quote">{renderInline(trimmed.slice(2), idx)}</blockquote>);
+      return;
+    }
+    if (/^[-*]\s+/.test(trimmed)) {
+      listBuffer.push(<li key={idx}>{renderInline(trimmed.replace(/^[-*]\s+/, ''), idx)}</li>);
+      return;
+    }
+    flushList();
+    blocks.push(<p key={idx} className="md-p">{renderInline(trimmed, idx)}</p>);
+  });
+
+  flushList();
+  return blocks;
+}
+
 export default function Itinerary() {
   const [step, setStep] = useState(1); // 1=details, 2=interests, 3=place picker, 4=itinerary+map
   const [destination, setDestination] = useState('');
@@ -439,9 +500,7 @@ Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening stru
               {messages.map((m, i) => (
                 <div key={i} className={`${styles.msg} ${m.role === 'user' ? styles.msgUser : styles.msgBot}`}>
                   <div className={styles.msgBubble}>
-                    {m.content.split('\n').map((line, j) => (
-                      <React.Fragment key={j}>{line}{j < m.content.split('\n').length - 1 && <br />}</React.Fragment>
-                    ))}
+                    {m.role === 'assistant' ? renderMarkdown(m.content) : m.content}
                   </div>
                 </div>
               ))}

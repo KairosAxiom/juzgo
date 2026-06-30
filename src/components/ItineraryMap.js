@@ -4,6 +4,16 @@ import styles from './ItineraryMap.module.css';
 // Day colour palette — Day 1 red, Day 2 green, Day 3 blue, etc.
 const DAY_COLORS = ['#E5484D', '#1E8E5E', '#2A6FDB', '#F0A500', '#8A4FD1', '#00A8A8', '#D6477A', '#5B6B62'];
 
+function toNum(v) {
+  const n = typeof v === 'string' ? parseFloat(v) : v;
+  return n;
+}
+
+function isValidCoord(v) {
+  const n = toNum(v);
+  return typeof n === 'number' && !isNaN(n) && n !== 0;
+}
+
 export default function ItineraryMap({ places, days }) {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
@@ -31,9 +41,9 @@ export default function ItineraryMap({ places, days }) {
     if (!leafletReady || !mapRef.current || mapInstance.current) return;
     const L = window.L;
 
-    const validPlaces = places.filter((p) => p.lat && p.lng);
+    const validPlaces = places.filter((p) => isValidCoord(p.lat) && isValidCoord(p.lng));
     const center = validPlaces.length
-      ? [validPlaces[0].lat, validPlaces[0].lng]
+      ? [toNum(validPlaces[0].lat), toNum(validPlaces[0].lng)]
       : [1.3521, 103.8198]; // fallback: Singapore
 
     mapInstance.current = L.map(mapRef.current, {
@@ -64,13 +74,15 @@ export default function ItineraryMap({ places, days }) {
     markersRef.current = [];
 
     const filtered = activeDay === 'all'
-      ? places.filter((p) => p.lat && p.lng)
-      : places.filter((p) => p.lat && p.lng && String(p.day) === String(activeDay));
+      ? places.filter((p) => isValidCoord(p.lat) && isValidCoord(p.lng))
+      : places.filter((p) => isValidCoord(p.lat) && isValidCoord(p.lng) && String(p.day) === String(activeDay));
 
     if (filtered.length === 0) return;
 
     const bounds = [];
     filtered.forEach((place) => {
+      const lat = toNum(place.lat);
+      const lng = toNum(place.lng);
       const color = DAY_COLORS[((place.day || 1) - 1) % DAY_COLORS.length];
       const icon = L.divIcon({
         className: styles.customMarker,
@@ -78,10 +90,10 @@ export default function ItineraryMap({ places, days }) {
         iconSize: [22, 22],
         iconAnchor: [11, 22],
       });
-      const marker = L.marker([place.lat, place.lng], { icon }).addTo(map);
+      const marker = L.marker([lat, lng], { icon }).addTo(map);
       marker.bindPopup(`<strong>${place.name}</strong><br/>Day ${place.day || '–'} · ${place.type || ''}`);
       markersRef.current.push(marker);
-      bounds.push([place.lat, place.lng]);
+      bounds.push([lat, lng]);
     });
 
     if (bounds.length > 0) {

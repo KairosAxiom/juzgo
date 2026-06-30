@@ -458,3 +458,53 @@
   width: 17px; height: 17px; accent-color: #1E8E5E; cursor: pointer;
   flex-shrink: 0;
 }
+
+/* ── Markdown rendering inside chat bubbles ── */
+.msgBubble :global(.md-p) {
+  margin: 0 0 10px;
+  line-height: 1.55;
+}
+.msgBubble :global(.md-p:last-child) { margin-bottom: 0; }
+
+.msgBubble :global(.md-h2) {
+  font-family: 'Newsreader', serif;
+  font-size: 20px;
+  font-weight: 600;
+  color: #16271E;
+  margin: 4px 0 10px;
+  line-height: 1.3;
+}
+
+.msgBubble :global(.md-h3) {
+  font-family: 'Newsreader', serif;
+  font-size: 17px;
+  font-weight: 600;
+  color: #16271E;
+  margin: 14px 0 8px;
+  line-height: 1.3;
+}
+.msgBubble :global(.md-h3:first-child) { margin-top: 0; }
+
+.msgBubble :global(.md-rule) {
+  border: none;
+  border-top: 1px solid currentColor;
+  opacity: .15;
+  margin: 12px 0;
+}
+
+.msgBubble :global(.md-quote) {
+  border-left: 3px solid #1E8E5E;
+  padding: 4px 0 4px 14px;
+  margin: 8px 0;
+  font-style: italic;
+  opacity: .9;
+}
+
+.msgBubble :global(.md-list) {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+.msgBubble :global(.md-list li) {
+  margin-bottom: 5px;
+  line-height: 1.5;
+}
