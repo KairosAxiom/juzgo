@@ -3,22 +3,49 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0a0f1a" />
-    <meta name="description" content="eSIM Connect — Affordable eSIM data plans for 190+ countries. Activate in 60 seconds." />
-    <meta property="og:title" content="eSIM Connect" />
-    <meta property="og:description" content="Travel the world. Stay connected." />
+    <meta name="theme-color" content="#1E8E5E" />
+    <meta name="description" content="Juzgo — Affordable eSIM data plans for 190+ countries, plus AI-powered itinerary planning. Activate in 60 seconds." />
+    <meta property="og:title" content="Juzgo" />
+    <meta property="og:description" content="The world, always connected. eSIM data and AI trip planning for 190+ countries." />
 
     <!-- PWA -->
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="eSIMConnect" />
+    <meta name="apple-mobile-web-app-title" content="Juzgo" />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/icons/icon-192.png" />
 
-    <title>eSIM Connect</title>
+    <title>Juzgo</title>
+
+    <!-- Twemoji: renders flag/emoji glyphs consistently across all platforms,
+         since Windows desktop browsers often lack native flag emoji fonts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/twemoji.min.js" crossorigin="anonymous"></script>
+    <style>
+      img.emoji {
+        height: 1em;
+        width: 1em;
+        margin: 0 .05em 0 .1em;
+        vertical-align: -0.1em;
+        display: inline-block;
+      }
+    </style>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
+    <script>
+      // Re-parse emoji into Twemoji images whenever the DOM changes (React re-renders)
+      function applyTwemoji() {
+        if (window.twemoji) {
+          window.twemoji.parse(document.body, { folder: 'svg', ext: '.svg' });
+        }
+      }
+      window.addEventListener('load', () => {
+        applyTwemoji();
+        const observer = new MutationObserver(() => applyTwemoji());
+        observer.observe(document.getElementById('root'), { childList: true, subtree: true, characterData: true });
+      });
+    </script>
   </body>
 </html>
