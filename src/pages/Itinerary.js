@@ -61,7 +61,7 @@ export default function Itinerary() {
       const res = await fetch('https://claude-proxy.kairosventure-io.workers.dev/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: [{ role: 'user', content: prompt }] }),
       });
       const data = await res.json();
       const text = data.content?.[0]?.text || 'Sorry, I couldn\'t generate your itinerary. Please try again.';
@@ -92,7 +92,7 @@ Rules: Only real, verified places with accurate addresses. No hallucinations. In
       const res = await fetch('https://claude-proxy.kairosventure-io.workers.dev/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: history }),
       });
       const data = await res.json();
       const text = data.content?.[0]?.text || 'Sorry, something went wrong.';
