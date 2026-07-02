@@ -18,6 +18,7 @@ import SavedItineraries from './pages/SavedItineraries';
 import TermsAndConditions from './pages/TermsAndConditions';
 import CorporateRegister from './pages/CorporateRegister';
 import CorporateAccept from './pages/CorporateAccept';
+import ResetPassword from './pages/ResetPassword';
 
 function App() {
   // Capture ?ref= reseller/referral code on any page load — stores for 30 days
@@ -56,6 +57,7 @@ function App() {
         <Route path="/terms"                 element={<TermsAndConditions />} />
         <Route path="/corporate/register"    element={<CorporateRegister />} />
         <Route path="/corporate/accept"      element={<CorporateAccept />} />
+        <Route path="/reset-password"         element={<ResetPassword />} />
         <Route path="*"                      element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

@@ -35,7 +35,7 @@ export default function Login() {
     if (!email.trim()) { setResetError('Enter your email above first, then click Forgot password again.'); return; }
     setResetLoading(true);
     const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: `${window.location.origin}/login`,
+      redirectTo: `${window.location.origin}/reset-password`,
     });
     setResetLoading(false);
     if (err) { setResetError(err.message); return; }
