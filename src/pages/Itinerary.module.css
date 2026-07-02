@@ -602,3 +602,22 @@
   .bottomBtnRow { flex-direction: column; }
   .btnSaveBig, .btnPrintBig, .btnReplanBig, .btnRestartBig { width: 100%; }
 }
+
+/* ── Share button in bottom action bar ── */
+.btnShareBig {
+  background: #EAF1FB;
+  border: 1px solid #CFE0F7;
+  border-radius: 999px;
+  padding: 13px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #2A6FDB;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: background .15s;
+}
+.btnShareBig:hover { background: #DCE9FA; }
+
+@media (max-width: 600px) {
+  .btnShareBig { width: 100%; }
+}

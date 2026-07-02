@@ -277,3 +277,49 @@
   .findCard { padding: 24px 20px; }
   .confirmCard { padding: 22px 18px; }
 }
+
+/* ── SavedItineraries v2 ── */
+.itinMeta {
+  font-size: 12px;
+  color: #6A7A70;
+  font-family: 'DM Mono', monospace;
+  letter-spacing: .06em;
+  margin-top: 6px;
+}
+
+.itinPreview {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #6A7A70;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #F0F5F2;
+}
+
+.btnOpen {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: #1E8E5E;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 18px;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: background .15s;
+}
+.btnOpen:hover { background: #15734B; }
+
+.btnShare {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2A6FDB;
+  background: #EAF1FB;
+  border: 1px solid #CFE0F7;
+  border-radius: 999px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: background .15s;
+}
+.btnShare:hover { background: #DCE9FA; }

@@ -7,7 +7,6 @@ import styles from './Pages.module.css';
 export default function SavedItineraries() {
   const [itineraries, setItineraries] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -33,12 +32,29 @@ export default function SavedItineraries() {
     setItineraries((prev) => prev.filter((i) => i.id !== id));
   }
 
+  function openItinerary(itin) {
+    navigate(`/itinerary?saved=${itin.id}`);
+  }
+
+  async function shareItinerary(itin) {
+    const text = `My ${itin.destination} itinerary from Juzgo:\n\n${(itin.trip_data || '').slice(0, 300)}…`;
+    const url = `${window.location.origin}/itinerary?saved=${itin.id}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `${itin.destination} Itinerary — Juzgo`, text, url });
+      } catch {}
+    } else {
+      await navigator.clipboard.writeText(url);
+      alert('Link copied to clipboard!');
+    }
+  }
+
   return (
     <div className={styles.page}>
       <main className={styles.main}>
         <div className={styles.eyebrow}>My trips</div>
         <h1 className={styles.h1}>Saved Itineraries</h1>
-        <p className={styles.sub}>Your AI-generated travel plans, saved for easy reference.</p>
+        <p className={styles.sub}>Your AI-generated travel plans, ready to explore or share.</p>
 
         {loading ? (
           <div className={styles.loading}><div className={styles.spinner} /></div>
@@ -61,19 +77,27 @@ export default function SavedItineraries() {
                     <div className={styles.itinDate}>
                       {new Date(itin.created_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric' })}
                     </div>
+                    {itin.selected_places?.length > 0 && (
+                      <div className={styles.itinMeta}>📍 {itin.selected_places.length} places</div>
+                    )}
                   </div>
                   <div className={styles.itinActions}>
-                    <button
-                      className={styles.btnView}
-                      onClick={() => setExpanded(expanded === itin.id ? null : itin.id)}
-                    >
-                      {expanded === itin.id ? 'Collapse' : 'View'}
+                    <button className={styles.btnOpen} onClick={() => openItinerary(itin)}>
+                      Open →
                     </button>
-                    <button className={styles.btnDelete} onClick={() => deleteItinerary(itin.id)}>Delete</button>
+                    <button className={styles.btnShare} onClick={() => shareItinerary(itin)}>
+                      Share
+                    </button>
+                    <button className={styles.btnDelete} onClick={() => deleteItinerary(itin.id)}>
+                      Delete
+                    </button>
                   </div>
                 </div>
-                {expanded === itin.id && (
-                  <div className={styles.itinContent}>{itin.trip_data}</div>
+                {/* Preview snippet */}
+                {itin.trip_data && (
+                  <div className={styles.itinPreview}>
+                    {itin.trip_data.slice(0, 160).replace(/[#*>\-]/g, '').trim()}…
+                  </div>
                 )}
               </div>
             ))}
