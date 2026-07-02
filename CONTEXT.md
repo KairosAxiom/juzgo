@@ -1,6 +1,6 @@
 # Juzgo — Living Project Context
-Last updated: July 2, 2026 (Session 16)
-Latest commit: adf80730
+Last updated: July 2, 2026 (Session 17)
+Latest commit: 44bc0b18
 
 ---
 
@@ -296,6 +296,8 @@ Plan My Itinerary → Plans → Terms & Conditions → Register → Login → La
 - **gitignore vs tracked:** .gitignore does not untrack already-committed files — use `git rm --cached <file>`
 - **Cloudflare Worker editor paste:** Clipboard-read is browser-permission gated; grant clipboard permission for dash.cloudflare.com, then Ctrl+V works
 - **Worker mock prices are SGD:** /airalo/orders must NOT multiply price (old code had a stray *1.35 conversion — removed Session 16)
+- **Render service URL was never renamed:** like the Cloudflare Pages project (internal name `esimconnect`), the Render backend's real hostname is still `esimconnect-backend.onrender.com` — NOT `juzgo-backend.onrender.com`. The dashboard sidebar shows it labelled "juzgo-backend" (service nickname only). Any env var or code referencing `juzgo-backend.onrender.com` will silently fail (404 `x-render-routing: no-server`, which browsers report as a CORS error). Always verify against the actual URL shown in Render's Logs/Events tab ("Available at your primary URL...") before assuming a rename took effect.
+- **Card checkout has no fulfillment step:** Checkout.js's card-payment branch only calls Stripe client-side then navigates to /order-confirmation with local state — no order row, no email, no QR. Confirmed Session 17. Do not assume a successful Stripe charge means an order/email happened; check for a corresponding `orders` row.
 
 ---
 
@@ -327,7 +329,7 @@ Plan My Itinerary → Plans → Terms & Conditions → Register → Login → La
 - [x] RLS policies on saved_itineraries
 - [x] ResetPassword page (/reset-password)
 - [x] Plans page dummy catalogue — 45 destinations, 187 plans seeded (Session 16)
-- [x] Order confirmation email fixed + rebranded to Juzgo (Session 16)
+- [x] Worker sender fixed + rebranded to Juzgo (Session 16) — NOTE: Session 17 found this fix targets a path Checkout.js never calls for card payments; see Session 17 log
 - [x] Frontend .env untracked from Git (Session 16)
 
 ---
@@ -335,13 +337,16 @@ Plan My Itinerary → Plans → Terms & Conditions → Register → Login → La
 ## Remaining Work
 
 ### Immediate (Next Session)
-- [ ] **Test purchase end-to-end** — confirm order confirmation email lands + from correct sender. Checkout runs through Server/server.js (/create-payment-intent, /order/wallet-pay), NOT the worker's /airalo/orders — server.js may still have an old esimconnect.world sender. Fix there if email fails.
-- [ ] **Corporate registration bug** — is_corporate/corp_id/corp_role not always set on signup (needs CorporateRegister.js + server.js)
+- [ ] **Build the card-payment order-fulfillment + email flow (NEW — top priority, see Session 17)** — Checkout.js's card branch calls Stripe confirmCardPayment() client-side then navigates straight to /order-confirmation with local state. No order row is ever created, no QR/eSIM is provisioned, no email is sent. Needs a server-side trigger (webhook is the reliable option — client can close tab post-payment) that: (1) creates an `orders` row, (2) calls the worker to provision QR/eSIM (worker already fixed for sender in Session 16), (3) sends the confirmation email. Also decide whether `/create-payment-intent` should pass `planId` through in Stripe metadata so the webhook's `payment_intent.succeeded` handler can distinguish a plan purchase from a wallet top-up (currently Checkout.js's card branch omits `source`, but /create-payment-intent's metadata always writes `source: 'wallet_topup'` regardless of caller — the webhook has no branch for a real purchase today). Need worker's current /airalo/orders code (dashboard Edit Code view) to see what it already expects as input before designing the trigger.
+- [ ] **Fix or remove /order/wallet-pay** — Checkout.js's wallet branch calls `POST {backend}/order/wallet-pay`, but this route does not exist in server.js (confirmed Session 17 — only /create-payment-intent, /order/complete, /webhook exist). Wallet checkout will 404 until this is built or the call is redirected.
+- [ ] **Corporate registration bug** — is_corporate/corp_id/corp_role not always set on signup (needs CorporateRegister.js + server.js; server.js's /corporate/register handler itself looks correct on inspection — profile update is synchronous with error throwing — so root cause is likely in CorporateRegister.js or the Supabase signup trigger, not a race in server.js)
 - [ ] **Password strength enforcement** — on registration forms
-- [ ] **Confirm ADMIN_EMAIL both sides** — Render ADMIN_EMAIL + Cloudflare REACT_APP_ADMIN_EMAIL both = davidlim@juzgo.world (frontend var present, value not visually confirmed; Render may be pending)
+- [x] ~~Confirm ADMIN_EMAIL both sides~~ — DONE (Session 17): Cloudflare Production REACT_APP_ADMIN_EMAIL confirmed = davidlim@juzgo.world via dashboard screenshot. Render ADMIN_EMAIL still not visually re-confirmed this session but was set correctly per Session 16 env dump.
 - [ ] **Purchases page — live eSIM status via Airalo API** (blocked on Airalo onboarding — company registration later this month)
 - [x] ~~Airalo API integration~~ — DEFERRED to Airalo onboarding; dummy 45-destination catalogue seeded as stand-in (Session 16)
 - [x] ~~Check .env Git tracking~~ — DONE (Session 16): frontend .env untracked, commit adf80730; Server/.env was never tracked
+- [x] ~~server.js stale esimconnect.world references~~ — DONE (Session 17): sender address, all URLs, all branding copy fixed (commit e5dce523)
+- [x] ~~REACT_APP_BACKEND_URL wrong in Cloudflare Production~~ — DONE (Session 17): was set to https://juzgo-backend.onrender.com (does not exist — Render service was never renamed, same as Cloudflare Pages project name situation). Corrected to https://esimconnect-backend.onrender.com in both Production and Preview.
 
 ### Phase 3 — Growth
 - [ ] Guest checkout improvements
@@ -451,6 +456,40 @@ Next session should:
 - Confirm Render + Cloudflare ADMIN_EMAIL both = davidlim@juzgo.world
 - (Later this month) Airalo onboarding → swap worker /airalo/* from MOCK_PACKAGES to live API;
   re-seed esim_plans from real Airalo data; then Purchases page live eSIM status
+
+### Session 17 — July 2, 2026 (server.js rebrand cleanup + backend URL bug hunt)
+Set out to test purchase end-to-end (Session 16's #1 flagged item). Found and fixed two real bugs, then discovered the actual purchase-fulfillment flow doesn't exist yet for card payments.
+
+Completed:
+- **server.js stale branding cleanup** (commit e5dce523, pushed to main): fixed `sendEmail()`'s hardcoded `from: 'eSIMConnect <hello@esimconnect.world>'` → `'Juzgo <hello@juzgo.world>'` (dead domain — every email through this function was failing silently: corp registration admin/applicant notices, corp approval notice). Also fixed all stale `esimconnect.world` URLs (redirect fallback, reseller/referral share links, corp invite link, admin panel link, login links) and all "eSIMConnect" branding copy in email subjects/bodies/sign-offs, health-check string, startup log. 20 lines changed, syntax-checked clean, isolated diff.
+- **First real test purchase attempt** — hit a wall: checkout failed with `Failed to fetch` / CORS preflight block on `/create-payment-intent`.
+- **Diagnosed the CORS failure** — NOT a code bug. `curl -i -X OPTIONS` against `juzgo-backend.onrender.com` returned `404` with header `x-render-routing: no-server`, meaning that hostname has no live service behind it at all (browsers report this as a CORS error since no CORS headers come back either way).
+- **Root cause found:** the Render service's real URL was never renamed during the rebrand — same situation as the Cloudflare Pages project (`esimconnect` internal name). Actual live URL is `esimconnect-backend.onrender.com`. Confirmed via Render's own Events/Logs: "Available at your primary URL https://esimconnect-backend.onrender.com".
+- **Fixed:** Cloudflare Pages Production env var `REACT_APP_BACKEND_URL` was set to the non-existent `juzgo-backend.onrender.com` — corrected to `esimconnect-backend.onrender.com`. (Preview was already correct — only Production had drifted, likely during earlier rebrand cleanup.) Also confirmed `REACT_APP_ADMIN_EMAIL` = `davidlim@juzgo.world` in Production while in there.
+- Triggered Cloudflare redeploy via empty commit (`44bc0b18`) since env var changes don't apply retroactively to an existing build.
+- **Second test purchase: succeeded.** Stripe sandbox card payment went through, order confirmation page rendered correctly (destination, data, validity, price all correct).
+- **Checked inbox for confirmation email: did not arrive.** Only old Supabase Auth emails present (password reset, signup confirm) from a prior day — nothing from this purchase.
+- **Traced the real cause by reading Checkout.js + OrderConfirmation.js:** the card-payment branch of `handleSubmit()` in Checkout.js calls `stripe.confirmCardPayment()` client-side, then navigates straight to `/order-confirmation` with local React state (`paymentIntent`, `plan`, `country`, `promoCode`). **There is no fetch call to create an order, provision a QR/eSIM, or send an email anywhere in this path.** OrderConfirmation.js only reads and renders `location.state` — it never calls anything either. The Session 16 worker/sender fix was real and correct, but the current checkout flow never invokes that code path for card payments.
+- Also noticed in passing: Checkout.js's wallet-payment branch calls `POST {backend}/order/wallet-pay`, but this route does not exist in server.js (confirmed against the full route list — only /create-payment-intent, /order/complete, /webhook exist). Wallet checkout is separately broken (404) whenever it's attempted.
+- Also noticed: `/create-payment-intent`'s Stripe metadata always sets `source: 'wallet_topup'` regardless of caller, and Checkout.js's card branch doesn't pass a `planId` through to Stripe metadata either — so even the webhook's existing `payment_intent.succeeded` handler has no way to distinguish a real plan purchase from a wallet top-up today, and has no branch that would create an order/send an email even if it could tell.
+
+Files changed:
+- Server/server.js (branding/URL fixes only — commit e5dce523)
+- Cloudflare Pages Production environment variables (REACT_APP_BACKEND_URL corrected — dashboard change, not in repo)
+- Empty commit to trigger redeploy (44bc0b18)
+
+Verified: server.js patch is live on Render (logs show `juzgo backend running on port 4000` + confirmed primary URL); Cloudflare Production redeployed and live; test purchase completes successfully through Stripe sandbox; confirmation email does NOT arrive (root cause identified, not yet fixed — see Next Session).
+
+NOT verified / flagged:
+- Render ADMIN_EMAIL value — not re-checked this session (was correct per Session 16 env dump, no reason to suspect drift, but not visually re-confirmed)
+- Worker's current /airalo/orders code was not reviewed this session — need to open Cloudflare dashboard Edit Code view to see what it currently expects, before designing the fulfillment trigger
+
+Next session should:
+- **Design and build the card-payment order-fulfillment + email flow** (see Remaining Work → Immediate, top item — this is the actual, corrected version of "test purchase end-to-end")
+- Fix or remove /order/wallet-pay (404 today)
+- Fix corp registration profile bug (needs CorporateRegister.js + server.js — server.js's own handler already inspected and looks correct)
+- Password strength enforcement on registration forms
+- (Later this month) Airalo onboarding → swap worker /airalo/* from MOCK_PACKAGES to live API; re-seed esim_plans from real Airalo data; then Purchases page live eSIM status
 
 ---
 
