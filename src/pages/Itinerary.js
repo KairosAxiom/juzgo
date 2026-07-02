@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
@@ -116,9 +116,14 @@ export default function Itinerary() {
   const chatRef = useRef(null);
   const { lang } = useLang();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const savedId = searchParams.get('saved');
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setUser(session?.user ?? null));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (savedId && session?.user) loadSavedItinerary(savedId);
+    });
   }, []);
 
   useEffect(() => {
@@ -270,6 +275,48 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
   }
 
   const PENDING_KEY = 'juzgo_pending_itinerary';
+
+  /* ── Load a saved itinerary by ID ── */
+  async function loadSavedItinerary(id) {
+    const { data, error } = await supabase
+      .from('saved_itineraries')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (error || !data) return;
+    setDestination(data.destination || '');
+    setFinalPlaces(data.selected_places || []);
+    setMessages([{ role: 'assistant', content: data.trip_data || '' }]);
+    setStep(4);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* ── Update an existing saved itinerary ── */
+  async function updateSavedItinerary() {
+    if (!savedId) { saveItinerary(); return; }
+    const itinText = messages.find((m) => m.role === 'assistant' && m.content.length > 100)?.content || '';
+    const { error } = await supabase
+      .from('saved_itineraries')
+      .update({ trip_data: itinText, selected_places: finalPlaces, created_at: new Date() })
+      .eq('id', savedId);
+    if (error) { alert(`Update failed: ${error.message}`); return; }
+    alert('Itinerary updated!');
+  }
+
+  /* ── Share itinerary ── */
+  async function shareItinerary() {
+    const url = savedId
+      ? `${window.location.origin}/itinerary?saved=${savedId}`
+      : window.location.href;
+    const title = `${destination} Itinerary — Juzgo`;
+    const text = `Check out my ${destination} itinerary planned with Juzgo!`;
+    if (navigator.share) {
+      try { await navigator.share({ title, text, url }); } catch {}
+    } else {
+      await navigator.clipboard.writeText(url);
+      alert('Link copied to clipboard!');
+    }
+  }
 
   async function saveItinerary() {
     const itinText = messages.find((m) => m.role === 'assistant' && m.content.length > 100)?.content || '';
@@ -536,7 +583,9 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
                 </div>
               </div>
               <div className={styles.chatActions}>
-                <button className={styles.btnSave} onClick={saveItinerary}>Save itinerary</button>
+                <button className={styles.btnSave} onClick={savedId ? updateSavedItinerary : saveItinerary}>
+                  {savedId ? 'Update' : 'Save itinerary'}
+                </button>
                 <button className={styles.btnRestart} onClick={resetAll}>New trip</button>
               </div>
             </div>
@@ -580,10 +629,13 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
             <div className={styles.bottomActions}>
               <p className={styles.bottomPrompt}>Happy with this plan?</p>
               <div className={styles.bottomBtnRow}>
-                <button className={styles.btnSaveBig} onClick={saveItinerary}>💾 Save itinerary</button>
+                <button className={styles.btnSaveBig} onClick={savedId ? updateSavedItinerary : saveItinerary}>
+                  {savedId ? '💾 Update itinerary' : '💾 Save itinerary'}
+                </button>
+                <button className={styles.btnShareBig} onClick={shareItinerary}>🔗 Share</button>
                 <button className={styles.btnPrintBig} onClick={() => window.print()}>🖨️ Print</button>
                 <button className={styles.btnReplanBig} onClick={() => setStep(3)}>↺ Re-plan places</button>
-                <button className={styles.btnRestartBig} onClick={resetAll}>+ Start a new trip</button>
+                <button className={styles.btnRestartBig} onClick={resetAll}>+ New trip</button>
               </div>
             </div>
           </div>
