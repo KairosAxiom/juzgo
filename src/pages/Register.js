@@ -3,6 +3,7 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useLang } from '../lib/i18n';
 import styles from './Auth.module.css';
+import GlobeLogo from '../components/GlobeLogo';
 
 export default function Register() {
   const [fullName, setFullName] = useState('');
@@ -47,11 +48,7 @@ export default function Register() {
         {/* Left panel */}
         <div className={styles.brandPanel}>
           <div className={styles.brandLogo}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.4">
-              <circle cx="12" cy="12" r="9.5" />
-              <ellipse cx="12" cy="12" rx="4" ry="9.5" />
-              <line x1="2.5" y1="12" x2="21.5" y2="12" />
-            </svg>
+            <GlobeLogo size={40} />
             <span className={styles.brandName}>Juzgo</span>
           </div>
           <blockquote className={styles.brandQuote}>

@@ -90,7 +90,7 @@ export default function Dashboard() {
           <div>
             <div className={styles.eyebrow}>My Account</div>
             <h1 className={styles.h1}>
-              {profile.full_name ? `Hi, ${profile.full_name.split(' ')[0]}.` : 'Dashboard'}
+              {profile.full_name ? `Hi, ${profile.full_name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')}.` : 'Dashboard'}
             </h1>
           </div>
           <div className={styles.headerRight}>
