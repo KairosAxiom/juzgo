@@ -29,7 +29,7 @@ app.use(express.json());
 
 // Health check
 app.get('/', (req, res) => {
-  res.json({ status: 'esimconnect backend running' });
+  res.json({ status: 'juzgo backend running' });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -191,7 +191,7 @@ app.post('/webhook', async (req, res) => {
       console.log(`Wallet credited: user=${userId} amount=SGD${amountSgd} new_balance=SGD${newBalance}`);
       await sendPushToUser(userId, {
         title: '💳 Wallet Topped Up',
-        body: `SGD ${amountSgd.toFixed(2)} has been added to your eSIMConnect wallet.`,
+        body: `SGD ${amountSgd.toFixed(2)} has been added to your Juzgo wallet.`,
         url: '/wallet',
       });
     } catch (err) {
@@ -358,7 +358,7 @@ app.post('/admin/reset-password', requireAdmin, async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Missing email' });
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${process.env.FRONTEND_URL || 'https://esimconnect.world'}/login`,
+      redirectTo: `${process.env.FRONTEND_URL || 'https://juzgo.world'}/login`,
     });
     if (error) throw error;
     res.json({ ok: true });
@@ -711,7 +711,7 @@ app.get('/reseller/my-stats', requireReseller, async (req, res) => {
         name:            reseller.name,
         code:            reseller.code,
         commission_pct:  reseller.commission_pct,
-        share_url:       `https://esimconnect.world?ref=${reseller.code}`,
+        share_url:       `https://juzgo.world?ref=${reseller.code}`,
       },
       stats: {
         total_commission_sgd:  totalCommission.toFixed(2),
@@ -830,7 +830,7 @@ app.get('/referral/my-stats', requireAuth, async (req, res) => {
 
     res.json({
       referral_code,
-      share_url: `https://esimconnect.world?ref=${referral_code}`,
+      share_url: `https://juzgo.world?ref=${referral_code}`,
       total_referrals: referred_users.length,
       credit_earned_sgd: parseFloat(profile.referral_credit_earned || 0).toFixed(2),
       referred_users,
@@ -994,7 +994,7 @@ async function sendEmail({ to, subject, text, html }) {
   }
   try {
     const { data, error } = await resend.emails.send({
-      from: 'eSIMConnect <hello@esimconnect.world>',
+      from: 'Juzgo <hello@juzgo.world>',
       to,
       subject,
       text,
@@ -1074,7 +1074,7 @@ app.post('/corporate/register', async (req, res) => {
     // Email admin for review
     await sendEmail({
       to: process.env.ADMIN_EMAIL,
-      subject: `[eSIMConnect] New Corporate Account Pending Approval — ${company_name}`,
+      subject: `[Juzgo] New Corporate Account Pending Approval — ${company_name}`,
       text: [
         `A new corporate account is awaiting your approval.`,
         ``,
@@ -1085,18 +1085,18 @@ app.post('/corporate/register', async (req, res) => {
         `Admin Name:    ${full_name}`,
         ``,
         `Please review and approve within 48 hours:`,
-        `https://esimconnect.world/admin`,
+        `https://juzgo.world/admin`,
       ].join('\n'),
     });
 
     // Email applicant with 48hr expectation
     await sendEmail({
       to: contact_email,
-      subject: `Your eSIMConnect Corporate Account is Under Review — ${company_name}`,
+      subject: `Your Juzgo Corporate Account is Under Review — ${company_name}`,
       text: [
         `Hi ${full_name || 'there'},`,
         ``,
-        `Thank you for registering ${company_name} on eSIMConnect.`,
+        `Thank you for registering ${company_name} on Juzgo.`,
         ``,
         `Your corporate account is currently under review. We aim to approve`,
         `all applications within 48 hours.`,
@@ -1105,9 +1105,9 @@ app.post('/corporate/register', async (req, res) => {
         `ready to use.`,
         ``,
         `If you have any questions, reply to this email or contact us at`,
-        `hello@esimconnect.world.`,
+        `hello@juzgo.world.`,
         ``,
-        `The eSIMConnect Team`,
+        `The Juzgo Team`,
       ].join('\n'),
     });
 
@@ -1163,22 +1163,22 @@ app.post('/corporate/invite', async (req, res) => {
       .eq('id', corp_id)
       .single();
 
-    const inviteUrl = `https://esimconnect.world/corporate/invite/${token}`;
+    const inviteUrl = `https://juzgo.world/corporate/invite/${token}`;
 
     await sendEmail({
       to: email,
-      subject: `You've been invited to join ${corp?.company_name} on eSIMConnect`,
+      subject: `You've been invited to join ${corp?.company_name} on Juzgo`,
       text: [
         `Hi there,`,
         ``,
-        `You've been invited to join ${corp?.company_name}'s corporate account on eSIMConnect.`,
+        `You've been invited to join ${corp?.company_name}'s corporate account on Juzgo.`,
         ``,
         `Click the link below to accept your invitation and create your account:`,
         `${inviteUrl}`,
         ``,
         `This invite link is single-use. If you did not expect this email, you can safely ignore it.`,
         ``,
-        `The eSIMConnect Team`,
+        `The Juzgo Team`,
       ].join('\n'),
     });
 
@@ -1383,7 +1383,7 @@ app.patch('/admin/corporates/:id', requireAdmin, async (req, res) => {
 
 // ── START SERVER ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`esimconnect backend running on port ${PORT}`);
+  console.log(`juzgo backend running on port ${PORT}`);
 });
 
 // POST /admin/corporates/:id/approve — approve a pending corporate account
@@ -1401,11 +1401,11 @@ app.post('/admin/corporates/:id/approve', requireAdmin, async (req, res) => {
     // Email the company contact
     await sendEmail({
       to: corp.contact_email,
-      subject: `Your eSIMConnect Corporate Account is Approved — ${corp.company_name}`,
+      subject: `Your Juzgo Corporate Account is Approved — ${corp.company_name}`,
       text: [
         `Hi there,`,
         ``,
-        `Great news! ${corp.company_name}'s eSIMConnect corporate account`,
+        `Great news! ${corp.company_name}'s Juzgo corporate account`,
         `has been approved and is now active.`,
         ``,
         `You can now:`,
@@ -1414,10 +1414,10 @@ app.post('/admin/corporates/:id/approve', requireAdmin, async (req, res) => {
         `  - Invite staff members`,
         `  - Start placing eSIM orders`,
         ``,
-        `Log in here: https://esimconnect.world/login`,
+        `Log in here: https://juzgo.world/login`,
         ``,
         `Welcome aboard,`,
-        `The eSIMConnect Team`,
+        `The Juzgo Team`,
       ].join('\n'),
     });
 
