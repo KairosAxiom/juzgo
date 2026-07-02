@@ -73,7 +73,7 @@ export default function SavedItineraries() {
                   </div>
                 </div>
                 {expanded === itin.id && (
-                  <div className={styles.itinContent}>{itin.content}</div>
+                  <div className={styles.itinContent}>{itin.trip_data}</div>
                 )}
               </div>
             ))}

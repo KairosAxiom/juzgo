@@ -122,6 +122,10 @@ export default function Itinerary() {
   }, []);
 
   useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [step]);
+
+  useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages]);
 
@@ -268,16 +272,17 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
   const PENDING_KEY = 'juzgo_pending_itinerary';
 
   async function saveItinerary() {
-    const content = messages.find((m) => m.role === 'assistant')?.content || '';
+    const itinText = messages.find((m) => m.role === 'assistant' && m.content.length > 100)?.content || '';
     if (!user) {
       // Persist everything needed to resume after login/register
       sessionStorage.setItem(PENDING_KEY, JSON.stringify({
-        destination, content, step, finalPlaces, dates, travelers, budget,
+        destination, content: itinText, step, finalPlaces, dates, travelers, budget,
       }));
       navigate('/login?redirect=itinerary');
       return;
     }
-    await supabase.from('saved_itineraries').insert({ user_id: user.id, destination, content, created_at: new Date() });
+    const { error: saveErr } = await supabase.from('saved_itineraries').insert({ user_id: user.id, destination, trip_data: itinText, selected_places: finalPlaces, created_at: new Date() });
+    if (saveErr) { alert(`Save failed: ${saveErr.message}`); return; }
     sessionStorage.removeItem(PENDING_KEY);
     alert('Itinerary saved!');
   }
@@ -298,7 +303,7 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
       setStep(4);
       // Auto-save now that the user is logged in
       supabase.from('saved_itineraries').insert({
-        user_id: user.id, destination: data.destination, content: data.content, created_at: new Date(),
+        user_id: user.id, destination: data.destination, trip_data: data.content, selected_places: [], created_at: new Date(),
       }).then(() => {
         sessionStorage.removeItem(PENDING_KEY);
         alert('Welcome back! Your itinerary has been saved.');
