@@ -1,6 +1,6 @@
 # Juzgo — Living Project Context
-Last updated: July 2, 2026
-Latest commit: a2ae07ea
+Last updated: July 2, 2026 (Session 16)
+Latest commit: adf80730
 
 ---
 
@@ -68,7 +68,7 @@ REACT_APP_BACKEND_URL=https://juzgo-backend.onrender.com
 REACT_APP_VAPID_PUBLIC_KEY=BHWKg9LMTkn1uA9pgQweT2DNyCfNAvMTYqO2QXSN8YJhlxrysfS3Br_iZpGVCbZfslZZ9g_0bfWRnyKncrKHG4k
 REACT_APP_ADMIN_EMAIL=davidlim@juzgo.world
 ```
-⚠️ Check .env is NOT tracked by Git (secrets exposure risk)
+✅ Frontend .env untracked from Git (Session 16, commit adf80730). All 6 REACT_APP_* vars confirmed present in Cloudflare Pages env. Values are public-facing (publishable/anon/VAPID-public) so no rotation needed. Server/.env was never tracked.
 
 ### Backend (Server/.env)
 ```
@@ -201,10 +201,20 @@ id, name, short_name, country_iso, code, commission_pct, discount_value,
 discount_type, attribution_months, start_date, is_active
 
 ### countries
-id, name, iso_code, flag_emoji
+id (uuid), name, code (iso2, e.g. SG), flag_emoji, region, created_at
+- Columns renamed in Session 16: flag → flag_emoji
+- RLS: public read SELECT policy "Public read countries" USING (true)
+- Seeded with 45 destinations (42 countries + 3 regional/global: ASIA, EURO, GLOBAL)
 
 ### esim_plans
-id, plan_name, country_id, data_gb, validity_days, price_sgd, is_active
+id (uuid), country_id (→ countries), plan_name, data_gb, validity_days, price_sgd,
+provider, is_active (bool default true), package_id (text unique), created_at
+- Columns renamed in Session 16: name → plan_name, duration_days → validity_days, price_usd → price_sgd
+- Added Session 16: is_active, package_id (links to worker MOCK_PACKAGES / future Airalo package id)
+- RLS: public read SELECT policy "Public read esim_plans" USING (true)
+- Seeded with 187 dummy plans (3–4 per country; ladder 1/3/5/10 GB + Unlimited for 10 premium countries)
+- Prices SGD, market-scaled; operator names are plausible placeholders (no real carrier brands)
+- Plans.js reads these tables DIRECTLY (not the worker); RLS with no SELECT policy = silently empty
 
 ---
 
@@ -280,6 +290,12 @@ Plan My Itinerary → Plans → Terms & Conditions → Register → Login → La
 - **CSS Modules + Leaflet:** Global styles must use `:global(.classname)` or plain injected class names
 - **Twemoji:** Loaded via CDN in public/index.html with MutationObserver for React re-renders
 - **Git path:** Use Git Bash with forward slashes `/d/Kairos/juzgo`; safe.directory may need setting on new machines
+- **Plans data source:** Plans.js reads Supabase countries + esim_plans DIRECTLY. Worker MOCK_PACKAGES only feeds /airalo/packages + /airalo/orders (fulfilment/QR/email), NOT the Plans page
+- **RLS silent empty:** A table with RLS enabled but no SELECT policy returns empty results (not an error) to the anon key. Public-catalogue tables need explicit `USING (true)` SELECT policies
+- **Resend single domain:** Free plan = 1 verified domain. Any email sent from an address on a deleted/unverified domain fails SILENTLY. All senders must be @juzgo.world
+- **gitignore vs tracked:** .gitignore does not untrack already-committed files — use `git rm --cached <file>`
+- **Cloudflare Worker editor paste:** Clipboard-read is browser-permission gated; grant clipboard permission for dash.cloudflare.com, then Ctrl+V works
+- **Worker mock prices are SGD:** /airalo/orders must NOT multiply price (old code had a stray *1.35 conversion — removed Session 16)
 
 ---
 
@@ -310,19 +326,22 @@ Plan My Itinerary → Plans → Terms & Conditions → Register → Login → La
 - [x] index.html rebranded to Juzgo
 - [x] RLS policies on saved_itineraries
 - [x] ResetPassword page (/reset-password)
+- [x] Plans page dummy catalogue — 45 destinations, 187 plans seeded (Session 16)
+- [x] Order confirmation email fixed + rebranded to Juzgo (Session 16)
+- [x] Frontend .env untracked from Git (Session 16)
 
 ---
 
 ## Remaining Work
 
 ### Immediate (Next Session)
-- [ ] **Purchases page — live eSIM status via Airalo API** (show active/expired/data remaining per eSIM)
-- [ ] **Airalo API integration** — replace mock data in plans with live Airalo packages
-- [ ] **REACT_APP_ADMIN_EMAIL** — update from davidlim@esimconnect.world to davidlim@juzgo.world in Cloudflare Pages env vars
-- [ ] **server.js ADMIN_EMAIL** — update from esimconnect.world to juzgo.world sender (Render env var)
-- [ ] **Corporate registration bug** — is_corporate/corp_id/corp_role not always set on signup
+- [ ] **Test purchase end-to-end** — confirm order confirmation email lands + from correct sender. Checkout runs through Server/server.js (/create-payment-intent, /order/wallet-pay), NOT the worker's /airalo/orders — server.js may still have an old esimconnect.world sender. Fix there if email fails.
+- [ ] **Corporate registration bug** — is_corporate/corp_id/corp_role not always set on signup (needs CorporateRegister.js + server.js)
 - [ ] **Password strength enforcement** — on registration forms
-- [ ] **Check .env Git tracking** — confirm .env is in .gitignore (secrets exposure risk)
+- [ ] **Confirm ADMIN_EMAIL both sides** — Render ADMIN_EMAIL + Cloudflare REACT_APP_ADMIN_EMAIL both = davidlim@juzgo.world (frontend var present, value not visually confirmed; Render may be pending)
+- [ ] **Purchases page — live eSIM status via Airalo API** (blocked on Airalo onboarding — company registration later this month)
+- [x] ~~Airalo API integration~~ — DEFERRED to Airalo onboarding; dummy 45-destination catalogue seeded as stand-in (Session 16)
+- [x] ~~Check .env Git tracking~~ — DONE (Session 16): frontend .env untracked, commit adf80730; Server/.env was never tracked
 
 ### Phase 3 — Growth
 - [ ] Guest checkout improvements
@@ -389,6 +408,49 @@ Commits: 59c35d4c → 4afefeea
 - Scroll to top on every step change
 - Pending itinerary persisted through login/register flow via sessionStorage
 Commits: ba35a876 → a2ae07ea
+
+### Session 16 — July 2, 2026 (Plans dummy data + worker email fix + .env untrack)
+Diagnosed empty Plans page: countries/esim_plans tables were empty AND columns didn't match Plans.js queries (flag vs flag_emoji, name vs plan_name, price_usd vs price_sgd, missing is_active).
+
+Completed:
+- Supabase migration + seed (SQL Editor, one-time):
+  - Renamed columns to match frontend; added is_active + package_id to esim_plans
+  - Enabled RLS + public-read SELECT policies on both tables (were returning empty silently)
+  - Seeded 45 destinations (42 countries + Asia/Europe/Global bundles) and 187 dummy plans
+  - Ladder 1/3/5/10 GB (+Unlimited for JP KR TH AU GB FR US CA TW AE); SGD prices market-scaled
+  - Plausible placeholder operator names (no real carriers); package_id matches worker 1:1
+  - Verified: 45 rows, correct plan counts; live on juzgo.world/plans (dropdown fills, cards render)
+- claude-proxy worker rewrite (deployed via dashboard Edit Code, version b3319b5e):
+  - Expanded MOCK_PACKAGES to all 45 destinations / 187 packages (IDs match esim_plans.package_id)
+  - FIXED broken order confirmation email — was sending from orders@esimconnect.world (domain deleted
+    from Resend during rename → every send silently failing). Now "Juzgo <hello@juzgo.world>", full
+    Juzgo rebrand (green/blue, correct fonts, juzgo.world links)
+  - Removed price*1.35 SGD double-conversion bug (mock prices already SGD); order code EC- → JZ-
+  - scheduled() keep-alive preserved as sibling of fetch() (single index_default export intact)
+- Frontend .env untracked from Git (was tracked despite .gitignore): git rm --cached .env → commit adf80730 → push
+  - Server/.env was NOT tracked (verified) — no real secrets exposed; frontend .env held only public values
+  - All 6 REACT_APP_* vars confirmed present in Cloudflare Pages env (build never depended on committed .env)
+
+Files changed:
+- Supabase schema + data (via SQL Editor — not in repo)
+- claude-proxy worker (Cloudflare dashboard — not in repo)
+- .env removed from Git tracking
+Commits: adf80730 (untrack .env)
+
+Verified: Plans page live (Hong Kong 4 plans, correct SGD pricing); worker deployed (b3319b5e, replaced 44-day-old bca5e186)
+
+NOT verified / flagged:
+- Real-purchase confirmation email path goes through server.js (not the worker) — server.js may still have
+  old esimconnect.world sender. NEEDS test purchase + fix in server.js if email fails.
+- Render ADMIN_EMAIL + Cloudflare REACT_APP_ADMIN_EMAIL values not visually confirmed as davidlim@juzgo.world
+
+Next session should:
+- Test purchase end-to-end → confirm confirmation email lands + correct sender (check server.js sender)
+- Fix corp registration profile bug (needs CorporateRegister.js + server.js)
+- Password strength enforcement on registration forms
+- Confirm Render + Cloudflare ADMIN_EMAIL both = davidlim@juzgo.world
+- (Later this month) Airalo onboarding → swap worker /airalo/* from MOCK_PACKAGES to live API;
+  re-seed esim_plans from real Airalo data; then Purchases page live eSIM status
 
 ---
 
