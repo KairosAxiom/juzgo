@@ -7,6 +7,7 @@ import GlobeLogo from '../components/GlobeLogo';
 
 export default function Register() {
   const [fullName, setFullName] = useState('');
+  const [nickname, setNickname] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
@@ -33,7 +34,7 @@ export default function Register() {
     const { error: err } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName, phone } },
+      options: { data: { full_name: fullName, nickname: nickname || fullName.split(' ')[0], phone } },
     });
     setLoading(false);
     if (err) { setError(err.message); return; }
@@ -76,6 +77,15 @@ export default function Register() {
               onChange={(e) => setFullName(e.target.value)}
               className={styles.input}
               required
+            />
+
+            <label className={styles.label}>What should we call you? <span className={styles.optional}>(optional)</span></label>
+            <input
+              type="text"
+              placeholder="e.g. Dave, YK, Traveller"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              className={styles.input}
             />
 
             <label className={styles.label}>Email</label>
