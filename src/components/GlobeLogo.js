@@ -1,55 +1,38 @@
 import React from 'react';
 
 /**
- * Coloured world globe SVG.
- * size: pixel size (default 44)
- * variant: 'colour' (default) | 'white' (white wireframe on transparent for dark backgrounds)
+ * Juzgo pin mark — a location-pin head standing on a small ground disc,
+ * with a blue accent dot standing in for the eSIM connectivity signal.
+ * (July 2026 mark refresh — earlier globe artwork replaced.)
+ * size: pixel width (default 44) — height follows the icon's fixed
+ * aspect ratio automatically.
+ * variant: 'colour' (default, green pin + blue dot) | 'white' (knockout
+ * for dark/frosted backgrounds)
  */
 export default function GlobeLogo({ size = 44, variant = 'colour' }) {
-  const r = size / 2;
-  const cx = r;
-  const cy = r;
-  const globeR = r * 0.86;
-
-  if (variant === 'white') {
-    return (
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} fill="none">
-        <circle cx={cx} cy={cy} r={globeR} stroke="#fff" strokeWidth="1.4" />
-        <ellipse cx={cx} cy={cy} rx={globeR * 0.42} ry={globeR} stroke="#fff" strokeWidth="1" />
-        <line x1={cx - globeR} y1={cy} x2={cx + globeR} y2={cy} stroke="#fff" strokeWidth="1" opacity="0.7" />
-        <ellipse cx={cx} cy={cy * 0.65} rx={globeR * 0.82} ry={globeR * 0.22} stroke="#fff" strokeWidth="0.8" opacity="0.5" />
-        <ellipse cx={cx} cy={cy * 1.35} rx={globeR * 0.82} ry={globeR * 0.22} stroke="#fff" strokeWidth="0.8" opacity="0.5" />
-      </svg>
-    );
-  }
+  const isWhite = variant === 'white';
+  const pinColor = isWhite ? '#FFFFFF' : '#1E8E5E';
+  const dotColor = isWhite ? '#FFFFFF' : '#2A6FDB';
+  const discFill = isWhite ? 'rgba(255,255,255,0.25)' : '#CDE6D8';
+  const height = size * (40 / 44);
 
   return (
-    <svg width={size} height={size} viewBox="0 0 44 44">
-      <defs>
-        <clipPath id={`gc-${size}`}>
-          <circle cx="22" cy="22" r="19" />
-        </clipPath>
-        <radialGradient id={`og-${size}`} cx="38%" cy="35%" r="65%">
-          <stop offset="0%" stopColor="#5BA4E5" />
-          <stop offset="100%" stopColor="#1A5FAB" />
-        </radialGradient>
-      </defs>
-      <circle cx="22" cy="22" r="19" fill={`url(#og-${size})`} />
-      <g clipPath={`url(#gc-${size})`}>
-        <ellipse cx="10" cy="18" rx="5" ry="8" fill="#4CAF7D" opacity="0.9" />
-        <ellipse cx="11" cy="30" rx="4" ry="6" fill="#4CAF7D" opacity="0.85" />
-        <ellipse cx="22" cy="16" rx="4" ry="5" fill="#6DBF82" opacity="0.9" />
-        <ellipse cx="23" cy="27" rx="5" ry="8" fill="#5AAF72" opacity="0.85" />
-        <ellipse cx="33" cy="15" rx="7" ry="6" fill="#4CAF7D" opacity="0.9" />
-        <ellipse cx="35" cy="29" rx="4" ry="3" fill="#6DBF82" opacity="0.8" />
-        <ellipse cx="22" cy="22" rx="6" ry="19" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
-        <ellipse cx="22" cy="22" rx="13" ry="19" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="0.8" />
-        <ellipse cx="22" cy="15" rx="16" ry="4" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="0.7" />
-        <ellipse cx="22" cy="22" rx="19" ry="5" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="0.7" />
-        <ellipse cx="22" cy="29" rx="16" ry="4" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="0.7" />
-      </g>
-      <ellipse cx="16" cy="14" rx="7" ry="5" fill="rgba(255,255,255,0.12)" />
-      <circle cx="22" cy="22" r="19" fill="none" stroke="rgba(42,111,219,0.4)" strokeWidth="1" />
+    <svg width={size} height={height} viewBox="0 0 44 40" fill="none">
+      {/* Ground disc the pin stands on */}
+      <path d="M6 35 A16 5 0 0 0 38 35 L38 37 A16 5 0 0 1 6 37 Z" fill={discFill} />
+      <ellipse cx="22" cy="35" rx="16" ry="5" fill="none" stroke={pinColor} strokeWidth="1" opacity="0.5" />
+      {/* Pin tip */}
+      <path d="M14.5 20.7 L22 31.2 L29.5 20.7 Z" fill={pinColor} />
+      {/* Pin head with a genuine punched-through hole (evenodd), so it
+          reads correctly on any background instead of matching a fixed fill */}
+      <path
+        fillRule="evenodd"
+        d="M22 16.2 m-8.7 0 a8.7 8.7 0 1 0 17.4 0 a8.7 8.7 0 1 0 -17.4 0
+           M22 15.2 m-3.2 0 a3.2 3.2 0 1 0 6.4 0 a3.2 3.2 0 1 0 -6.4 0"
+        fill={pinColor}
+      />
+      {/* Signal dot */}
+      <circle cx="30.5" cy="6.7" r="2.8" fill={dotColor} />
     </svg>
   );
 }

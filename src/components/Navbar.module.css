@@ -25,18 +25,19 @@
 .logo {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 0;
   text-decoration: none;
   flex-shrink: 0;
 }
 
 .logoText {
   font-family: 'Outfit', sans-serif;
-  font-size: 52px;
+  font-size: 68px;
   font-weight: 700;
   letter-spacing: -.03em;
   color: #2A6FDB;
   line-height: 1;
+  margin-left: -6px;
 }
 
 /* Desktop nav links */
@@ -180,90 +181,13 @@
 
 @media (max-width: 480px) {
   .inner { padding: 0 18px; }
-  .logoText { font-size: 42px; }
+  .logoText { font-size: 55px; }
 }
 
-/* ── Animated navbar globe ── */
+/* ── Logo icon wrap ── */
 .globeWrap {
   position: relative;
-  width: 44px;
-  height: 44px;
+  width: 66px;
+  height: 60px;
   flex-shrink: 0;
-}
-
-.globeSvg {
-  position: absolute;
-  inset: 0;
-}
-
-.globeLon {
-  animation: spinLon 6s linear infinite;
-  transform-origin: 16px 16px;
-}
-
-.globeLat {
-  animation: spinLat 8s linear infinite reverse;
-  transform-origin: 16px 16px;
-}
-
-@keyframes spinLon {
-  from { transform: rotateY(0deg); }
-  to   { transform: rotateY(360deg); }
-}
-
-@keyframes spinLat {
-  from { transform: rotateX(0deg); }
-  to   { transform: rotateX(360deg); }
-}
-
-/* Orbiting dot */
-.globeOrbit {
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  animation: orbitDot 3s linear infinite;
-  transform-origin: center;
-}
-
-@keyframes orbitDot {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
-.globeDot {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #1E8E5E;
-  box-shadow: 0 0 6px rgba(30,142,94,.8);
-}
-
-/* ── Coloured globe animations ── */
-.globeLands {
-  animation: rotateGlobe 12s linear infinite;
-  transform-origin: 22px 22px;
-}
-
-.globeLon {
-  animation: spinLon 8s linear infinite;
-  transform-origin: 22px 22px;
-}
-
-.globeLon2 {
-  animation: spinLon 8s linear infinite reverse;
-  transform-origin: 22px 22px;
-}
-
-@keyframes rotateGlobe {
-  from { transform: translateX(0); }
-  to   { transform: translateX(-10px); }
-}
-
-@keyframes spinLon {
-  from { transform: rotateY(0deg); }
-  to   { transform: rotateY(360deg); }
 }
