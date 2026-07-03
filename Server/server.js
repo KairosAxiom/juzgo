@@ -221,7 +221,7 @@ app.post('/order/wallet-pay', requireAuth, async (req, res) => {
   try {
     const { data: plan, error: planErr } = await supabase
       .from('esim_plans')
-      .select('*')
+      .select('*, countries(name, code, flag_emoji)')
       .eq('id', planId)
       .single();
     if (planErr || !plan) return res.status(404).json({ error: 'Plan not found' });
@@ -270,8 +270,8 @@ app.post('/order/wallet-pay', requireAuth, async (req, res) => {
         user_id: userId,
         customer_email: customerEmail,
         customer_name: profile.full_name || null,
-        country_name: plan.country_name || null,
-        country_code: plan.country_code || null,
+        country_name: plan.countries?.name || null,
+        country_code: plan.countries?.code || null,
         package_title: plan.plan_name || null,
         data_amount: dataAmount,
         validity_days: plan.validity_days,
@@ -383,7 +383,7 @@ app.post('/order/create', async (req, res) => {
     // Pull plan details from the DB rather than trusting client-supplied price/data.
     const { data: plan, error: planErr } = await supabase
       .from('esim_plans')
-      .select('*')
+      .select('*, countries(name, code, flag_emoji)')
       .eq('id', planId)
       .single();
     if (planErr || !plan) {
@@ -419,8 +419,8 @@ app.post('/order/create', async (req, res) => {
         user_id: userId || null,
         customer_email: customerEmail,
         customer_name: customerName || null,
-        country_name: countryName || plan.country_name || null,
-        country_code: countryCode || plan.country_code || null,
+        country_name: countryName || plan.countries?.name || null,
+        country_code: countryCode || plan.countries?.code || null,
         package_title: plan.plan_name || null,
         data_amount: dataAmount,
         validity_days: plan.validity_days,
