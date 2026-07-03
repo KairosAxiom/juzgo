@@ -107,15 +107,20 @@ app.post('/push/send', async (req, res) => {
 
 app.post('/create-payment-intent', async (req, res) => {
   try {
-    const { amount, currency = 'sgd', userId } = req.body;
-    if (!amount || amount < 500) {
+    const { amount, currency = 'sgd', userId, planId, type } = req.body;
+    const isPlanPurchase = type === 'plan_purchase';
+    // The SGD5 minimum exists for wallet top-ups; plan purchases are validated
+    // by their own price, so don't block a legitimately cheap plan.
+    if (!amount || (!isPlanPurchase && amount < 500)) {
       return res.status(400).json({ error: 'Minimum top-up is SGD 5.' });
     }
+    const metadata = { user_id: userId || '', source: isPlanPurchase ? 'plan_purchase' : 'wallet_topup' };
+    if (planId) metadata.plan_id = String(planId);
     const paymentIntent = await stripe.paymentIntents.create({
       amount,
       currency,
       automatic_payment_methods: { enabled: true },
-      metadata: { user_id: userId || '', source: 'wallet_topup' },
+      metadata,
     });
     res.json({ clientSecret: paymentIntent.client_secret, paymentIntentId: paymentIntent.id });
   } catch (err) {
@@ -200,6 +205,122 @@ app.post('/webhook', async (req, res) => {
     }
   }
   res.json({ received: true });
+});
+
+// POST /order/create — finalize a card-payment purchase (the piece that was
+// missing entirely): verify the Stripe PaymentIntent server-side, write the
+// order row, and email the receipt. Called by Checkout.js right after
+// stripe.confirmCardPayment() succeeds.
+//
+// NOTE — scope limit: this does NOT yet provision an eSIM QR code. That needs
+// the Cloudflare worker's /airalo/orders endpoint, which wasn't available to
+// review this session. qr_url is left unset; the email tells the customer
+// their QR will follow separately. Revisit once the worker's request/response
+// contract for provisioning is confirmed.
+//
+// REQUIRES a one-time migration before this will work — run in Supabase SQL
+// Editor:
+//   ALTER TABLE orders ADD COLUMN IF NOT EXISTS stripe_payment_intent_id text;
+//   CREATE UNIQUE INDEX IF NOT EXISTS orders_stripe_pi_idx
+//     ON orders (stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL;
+app.post('/order/create', async (req, res) => {
+  const {
+    paymentIntentId, planId, countryName, countryCode,
+    customerEmail, customerName, userId, referralCode, priceSgd,
+  } = req.body;
+
+  if (!paymentIntentId || !planId || !customerEmail) {
+    return res.status(400).json({ error: 'paymentIntentId, planId and customerEmail are required' });
+  }
+
+  try {
+    // Idempotency guard — a retry or double-submit shouldn't create two
+    // orders for the same charge.
+    const { data: existing } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('stripe_payment_intent_id', paymentIntentId)
+      .maybeSingle();
+    if (existing) {
+      return res.json({ ok: true, order: existing, alreadyExisted: true });
+    }
+
+    // Never trust the client alone — confirm the charge actually succeeded.
+    const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    if (intent.status !== 'succeeded') {
+      return res.status(402).json({ error: `Payment not confirmed (status: ${intent.status})` });
+    }
+
+    // Pull plan details from the DB rather than trusting client-supplied price/data.
+    const { data: plan, error: planErr } = await supabase
+      .from('esim_plans')
+      .select('*')
+      .eq('id', planId)
+      .single();
+    if (planErr || !plan) {
+      return res.status(404).json({ error: 'Plan not found' });
+    }
+
+    const order_code = 'JZ-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+    const dataAmount = plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`;
+
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .insert({
+        user_id: userId || null,
+        customer_email: customerEmail,
+        customer_name: customerName || null,
+        country_name: countryName || plan.country_name || null,
+        country_code: countryCode || plan.country_code || null,
+        package_title: plan.plan_name || null,
+        data_amount: dataAmount,
+        validity_days: plan.validity_days,
+        price_sgd: priceSgd || plan.price_sgd,
+        order_code,
+        status: 'completed',
+        payment_method: 'card',
+        stripe_payment_intent_id: paymentIntentId,
+        referral_code: referralCode || null,
+      })
+      .select()
+      .single();
+    if (orderErr) throw orderErr;
+
+    if (userId) {
+      await sendPushToUser(userId, {
+        title: '✅ Order confirmed',
+        body: `Your ${order.country_name || 'eSIM'} plan is confirmed. Check your email for details.`,
+        url: '/purchases',
+      });
+    }
+
+    await sendEmail({
+      to: customerEmail,
+      subject: `Your Juzgo eSIM Order — ${order.order_code}`,
+      text: [
+        `Hi ${customerName || 'there'},`,
+        ``,
+        `Thanks for your purchase! Here are your order details:`,
+        ``,
+        `Order code:  ${order.order_code}`,
+        `Destination: ${order.country_name || '—'}`,
+        `Data:        ${order.data_amount || '—'}`,
+        `Validity:    ${order.validity_days || '—'} days`,
+        `Paid:        SGD ${parseFloat(order.price_sgd).toFixed(2)}`,
+        ``,
+        `Your eSIM QR code will follow in a separate email shortly.`,
+        ``,
+        `The Juzgo Team`,
+      ].join('\n'),
+    });
+
+    console.log(`[ORDER] Created ${order.order_code} for ${customerEmail} — payment_intent ${paymentIntentId}`);
+
+    return res.json({ ok: true, order });
+  } catch (err) {
+    console.error('POST /order/create', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1059,17 +1180,36 @@ app.post('/corporate/register', async (req, res) => {
       .single();
     if (corpErr) throw corpErr;
 
-    // Upgrade profile to corp admin
-    const { error: profErr } = await supabase
-      .from('profiles')
-      .update({
-        is_corporate: true,
-        corp_id:      corp.id,
-        corp_role:    'admin',
-        full_name:    full_name || undefined,
-      })
-      .eq('id', user_id);
-    if (profErr) throw profErr;
+    // Upgrade profile to corp admin.
+    // The profiles row is created by an on-signup DB trigger, which can lag
+    // slightly behind auth.signUp() returning. A plain .update().eq('id', ...)
+    // does NOT error when zero rows match — it just silently no-ops, which is
+    // why is_corporate/corp_id/corp_role weren't always getting set. Retry
+    // briefly and confirm a row was actually updated before continuing.
+    let profileUpdated = false;
+    for (let attempt = 0; attempt < 5 && !profileUpdated; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 400));
+      const { data: updatedRows, error: profErr } = await supabase
+        .from('profiles')
+        .update({
+          is_corporate: true,
+          corp_id:      corp.id,
+          corp_role:    'admin',
+          full_name:    full_name || undefined,
+        })
+        .eq('id', user_id)
+        .select('id');
+      if (profErr) throw profErr;
+      if (updatedRows && updatedRows.length > 0) profileUpdated = true;
+    }
+    if (!profileUpdated) {
+      // Roll back the corp row so we don't leave an orphaned pending
+      // corporate account with no linked admin.
+      await supabase.from('corporates').delete().eq('id', corp.id);
+      return res.status(500).json({
+        error: 'Could not finish setting up your corporate account. Please try again in a moment.',
+      });
+    }
 
     // Email admin for review
     await sendEmail({

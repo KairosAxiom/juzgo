@@ -67,14 +67,54 @@ function CheckoutForm({ plan, country, user, walletBalance }) {
         const res = await fetch(`${backend}/create-payment-intent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: Math.round(parseFloat(total) * 100), currency: 'sgd', planId: plan.id }),
+          body: JSON.stringify({
+            amount: Math.round(parseFloat(total) * 100),
+            currency: 'sgd',
+            planId: plan.id,
+            userId: user?.id || null,
+            type: 'plan_purchase',
+          }),
         });
         const { clientSecret } = await res.json();
         const result = await stripe.confirmCardPayment(clientSecret, {
           payment_method: { card: elements.getElement(CardElement), billing_details: { name, email } },
         });
         if (result.error) throw new Error(result.error.message);
-        navigate('/order-confirmation', { state: { paymentIntent: result.paymentIntent, plan, country, promoCode } });
+
+        // Payment has succeeded at this point — the card has been charged.
+        // Now create the actual order record and trigger the confirmation
+        // email. If this step fails, we do NOT show the person an error
+        // (they were already charged); we log it for follow-up and still
+        // take them to the confirmation page, which falls back to the plan/
+        // country details it already has so they still see what they bought.
+        let order = null;
+        try {
+          const orderRes = await fetch(`${backend}/order/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              paymentIntentId: result.paymentIntent.id,
+              planId: plan.id,
+              countryName: country?.name,
+              countryCode: country?.code || country?.country_code || null,
+              customerEmail: email,
+              customerName: name,
+              userId: user?.id || null,
+              referralCode: promoApplied ? promoCode : null,
+              priceSgd: total,
+            }),
+          });
+          const orderData = await orderRes.json();
+          if (orderRes.ok) {
+            order = orderData.order;
+          } else {
+            console.error('Order creation failed:', orderData.error);
+          }
+        } catch (orderErr) {
+          console.error('Order creation request failed:', orderErr);
+        }
+
+        navigate('/order-confirmation', { state: { order, paymentIntent: result.paymentIntent, plan, country, promoCode } });
       }
     } catch (err) {
       setError(err.message);
