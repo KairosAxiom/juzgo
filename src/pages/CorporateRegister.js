@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import Footer from '../components/Footer';
+import { supabase } from '../lib/supabase';
 import styles from './CorporateRegister.module.css';
 
 const FREE_DOMAINS = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'protonmail.com'];
@@ -52,11 +53,25 @@ export default function CorporateRegister() {
 
     setLoading(true);
     try {
+      // Create the Supabase auth account first. This step was previously
+      // missing entirely — the form collected a password but never signed
+      // anyone up, so /corporate/register never received a user_id and
+      // silently could not upgrade any profile to corp admin.
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: form.contact_email,
+        password: form.password,
+        options: { data: { full_name: form.full_name } },
+      });
+      if (signUpError) throw new Error(signUpError.message);
+
+      const user_id = signUpData?.user?.id;
+      if (!user_id) throw new Error('Could not create your account. Please try again.');
+
       const backend = process.env.REACT_APP_BACKEND_URL;
       const res = await fetch(`${backend}/corporate/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, user_id }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Registration failed.');
