@@ -100,7 +100,7 @@ function CheckoutForm({ plan, country, user, walletBalance }) {
               customerEmail: email,
               customerName: name,
               userId: user?.id || null,
-              referralCode: promoApplied ? promoCode : null,
+              promoCode: promoApplied ? promoCode : null,
               priceSgd: total,
             }),
           });

@@ -10,7 +10,7 @@ const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
 
 const TOP_UP_AMOUNTS = [10, 20, 50, 100];
 
-function WalletForm({ profile }) {
+function WalletForm({ profile, onTopUpSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
   const [amount, setAmount] = useState(20);
@@ -29,10 +29,17 @@ function WalletForm({ profile }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const backend = process.env.REACT_APP_BACKEND_URL;
-      const res = await fetch(`${backend}/wallet/create-topup-intent`, {
+      // /wallet/create-topup-intent never existed — /create-payment-intent
+      // is the real endpoint, and the webhook already has full logic to
+      // credit profiles.wallet_balance on payment_intent.succeeded.
+      const res = await fetch(`${backend}/create-payment-intent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ amount: Math.round(finalAmount * 100) }),
+        body: JSON.stringify({
+          amount: Math.round(finalAmount * 100),
+          currency: 'sgd',
+          userId: session.user.id,
+        }),
       });
       const { clientSecret } = await res.json();
       const result = await stripe.confirmCardPayment(clientSecret, {
@@ -40,6 +47,10 @@ function WalletForm({ profile }) {
       });
       if (result.error) throw new Error(result.error.message);
       setSuccess(true);
+      // The webhook credits the balance asynchronously (usually within a
+      // couple seconds) — give it a moment, then refresh the displayed
+      // balance so the person isn't left staring at a stale number.
+      setTimeout(() => onTopUpSuccess?.(), 2500);
     } catch (err) {
       setError(err.message);
     }
@@ -108,6 +119,14 @@ export default function Wallet() {
   const [profile, setProfile] = useState(null);
   const navigate = useNavigate();
 
+  function refreshProfile() {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) return;
+      supabase.from('profiles').select('*').eq('id', session.user.id).single()
+        .then(({ data }) => setProfile(data));
+    });
+  }
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { navigate('/login'); return; }
@@ -138,7 +157,7 @@ export default function Wallet() {
           <div className={styles.topUpCard}>
             <h2 className={styles.topUpH2}>Add funds</h2>
             <Elements stripe={stripePromise}>
-              <WalletForm profile={profile} />
+              <WalletForm profile={profile} onTopUpSuccess={refreshProfile} />
             </Elements>
           </div>
         </div>

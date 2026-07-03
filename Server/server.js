@@ -207,6 +207,135 @@ app.post('/webhook', async (req, res) => {
   res.json({ received: true });
 });
 
+// POST /order/wallet-pay — pay for a plan using Juzgo Wallet balance.
+// This route never existed, which is why wallet checkout 404'd. Mirrors
+// /order/create's logic (resolve promo, write order, email receipt) but
+// deducts from wallet_balance instead of going through Stripe.
+app.post('/order/wallet-pay', requireAuth, async (req, res) => {
+  const userId = req.authUser.id;
+  const customerEmail = req.authUser.email;
+  const { planId, promoCode } = req.body;
+
+  if (!planId) return res.status(400).json({ error: 'planId is required' });
+
+  try {
+    const { data: plan, error: planErr } = await supabase
+      .from('esim_plans')
+      .select('*')
+      .eq('id', planId)
+      .single();
+    if (planErr || !plan) return res.status(404).json({ error: 'Plan not found' });
+
+    const { data: profile, error: profErr } = await supabase
+      .from('profiles')
+      .select('wallet_balance, full_name')
+      .eq('id', userId)
+      .single();
+    if (profErr || !profile) return res.status(404).json({ error: 'Profile not found' });
+
+    // Resolve promo/referral code server-side, same helper /reseller/validate uses.
+    let referral_code = null;
+    let reseller_code = null;
+    let discount_sgd = 0;
+    if (promoCode) {
+      const promo = await resolvePromoCode(promoCode);
+      if (promo.valid) {
+        if (promo.kind === 'referral') referral_code = promo.code;
+        if (promo.kind === 'reseller') {
+          reseller_code = promo.code;
+          const price = parseFloat(plan.price_sgd || 0);
+          discount_sgd = promo.discount_type === 'percent'
+            ? parseFloat((price * (promo.discount_value / 100)).toFixed(2))
+            : parseFloat(promo.discount_value || 0);
+        }
+      }
+    }
+
+    const price = parseFloat(plan.price_sgd || 0);
+    const total = Math.max(0, parseFloat((price - discount_sgd).toFixed(2)));
+    const currentBalance = parseFloat(profile.wallet_balance || 0);
+
+    if (currentBalance < total) {
+      return res.status(402).json({ error: `Insufficient wallet balance. You have SGD ${currentBalance.toFixed(2)}, this plan costs SGD ${total.toFixed(2)}.` });
+    }
+
+    const order_code = 'JZ-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+    const dataAmount = plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`;
+
+    // Write the order first — only deduct the balance once we know the order
+    // actually saved, so a DB failure can't charge the wallet for nothing.
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .insert({
+        user_id: userId,
+        customer_email: customerEmail,
+        customer_name: profile.full_name || null,
+        country_name: plan.country_name || null,
+        country_code: plan.country_code || null,
+        package_title: plan.plan_name || null,
+        data_amount: dataAmount,
+        validity_days: plan.validity_days,
+        price_sgd: total,
+        discount_sgd,
+        order_code,
+        status: 'completed',
+        payment_method: 'wallet',
+        referral_code,
+        reseller_code,
+      })
+      .select()
+      .single();
+    if (orderErr) throw orderErr;
+
+    const newBalance = parseFloat((currentBalance - total).toFixed(2));
+    const { error: balanceErr } = await supabase
+      .from('profiles')
+      .update({ wallet_balance: newBalance })
+      .eq('id', userId);
+    if (balanceErr) {
+      // Order exists but balance didn't move — mark it so it's visible in
+      // admin/orders rather than silently leaving free plans on the books.
+      await supabase.from('orders').update({ status: 'wallet_deduction_failed' }).eq('id', order.id);
+      throw balanceErr;
+    }
+
+    if (referral_code) await processReferralCredit(referral_code, userId);
+
+    await sendPushToUser(userId, {
+      title: '✅ Order confirmed',
+      body: `Your ${order.country_name || 'eSIM'} plan is confirmed. Check your email for details.`,
+      url: '/purchases',
+    });
+
+    await sendEmail({
+      to: customerEmail,
+      subject: `Your Juzgo eSIM Order — ${order.order_code}`,
+      text: [
+        `Hi ${profile.full_name || 'there'},`,
+        ``,
+        `Thanks for your purchase! Here are your order details:`,
+        ``,
+        `Order code:  ${order.order_code}`,
+        `Destination: ${order.country_name || '—'}`,
+        `Data:        ${order.data_amount || '—'}`,
+        `Validity:    ${order.validity_days || '—'} days`,
+        `Paid:        SGD ${parseFloat(order.price_sgd).toFixed(2)} (Juzgo Wallet)`,
+        ``,
+        `Your eSIM QR code will follow in a separate email shortly.`,
+        ``,
+        `The Juzgo Team`,
+      ].join('\n'),
+    });
+
+    console.log(`[ORDER] Created ${order.order_code} for ${customerEmail} — wallet payment, new balance SGD${newBalance}`);
+
+    return res.json({ success: true, order });
+  } catch (err) {
+    console.error('POST /order/wallet-pay', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /order/create — finalize a card-payment purchase (the piece that was
 // missing entirely): verify the Stripe PaymentIntent server-side, write the
 // order row, and email the receipt. Called by Checkout.js right after
@@ -226,7 +355,7 @@ app.post('/webhook', async (req, res) => {
 app.post('/order/create', async (req, res) => {
   const {
     paymentIntentId, planId, countryName, countryCode,
-    customerEmail, customerName, userId, referralCode, priceSgd,
+    customerEmail, customerName, userId, promoCode, priceSgd,
   } = req.body;
 
   if (!paymentIntentId || !planId || !customerEmail) {
@@ -261,6 +390,26 @@ app.post('/order/create', async (req, res) => {
       return res.status(404).json({ error: 'Plan not found' });
     }
 
+    // Resolve the promo/referral code server-side so it lands on the right
+    // column — referral_code for USR- codes, reseller_code for reseller
+    // discount codes — same helper /reseller/validate uses.
+    let referral_code = null;
+    let reseller_code = null;
+    let discount_sgd = 0;
+    if (promoCode) {
+      const promo = await resolvePromoCode(promoCode);
+      if (promo.valid) {
+        if (promo.kind === 'referral') referral_code = promo.code;
+        if (promo.kind === 'reseller') {
+          reseller_code = promo.code;
+          const price = parseFloat(plan.price_sgd || 0);
+          discount_sgd = promo.discount_type === 'percent'
+            ? parseFloat((price * (promo.discount_value / 100)).toFixed(2))
+            : parseFloat(promo.discount_value || 0);
+        }
+      }
+    }
+
     const order_code = 'JZ-' + Math.random().toString(36).substring(2, 10).toUpperCase();
     const dataAmount = plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`;
 
@@ -276,15 +425,19 @@ app.post('/order/create', async (req, res) => {
         data_amount: dataAmount,
         validity_days: plan.validity_days,
         price_sgd: priceSgd || plan.price_sgd,
+        discount_sgd,
         order_code,
         status: 'completed',
         payment_method: 'card',
         stripe_payment_intent_id: paymentIntentId,
-        referral_code: referralCode || null,
+        referral_code,
+        reseller_code,
       })
       .select()
       .single();
     if (orderErr) throw orderErr;
+
+    if (userId && referral_code) await processReferralCredit(referral_code, userId);
 
     if (userId) {
       await sendPushToUser(userId, {
@@ -695,64 +848,67 @@ app.get('/admin/reseller-sales', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // POST /reseller/validate — validate a code and return discount info
+// Shared by /reseller/validate and any purchase flow (card, wallet) that
+// needs to resolve a promo/referral code server-side. Returns which column
+// it belongs on (orders.referral_code for USR- codes, orders.reseller_code
+// for reseller discount codes) so callers don't have to guess.
+async function resolvePromoCode(rawCode) {
+  const code = (rawCode || '').toUpperCase().trim();
+  if (!code) return { valid: false, message: 'Missing code' };
+
+  if (code.startsWith('USR-')) {
+    const { data: referrer, error: refError } = await supabase
+      .from('profiles')
+      .select('id, full_name, referral_code')
+      .eq('referral_code', code)
+      .single();
+    if (refError || !referrer) {
+      return { valid: false, message: 'Referral code not found' };
+    }
+    const firstName = (referrer.full_name || 'A friend').split(' ')[0];
+    return {
+      valid: true,
+      kind: 'referral',
+      code: referrer.referral_code,
+      discount_value: 0,
+      discount_type: 'percent',
+      referrer_id: referrer.id,
+      message: `Referral code applied — referred by ${firstName}`,
+    };
+  }
+
+  const { data: reseller, error } = await supabase
+    .from('resellers')
+    .select('code, commission_pct, discount_value, discount_type, is_active, start_date, name')
+    .eq('code', code)
+    .single();
+
+  if (error || !reseller) return { valid: false, message: 'Code not found' };
+  if (!reseller.is_active) return { valid: false, message: 'This code is no longer active' };
+  if (reseller.start_date && new Date(reseller.start_date) > new Date()) {
+    return { valid: false, message: 'This code is not yet active' };
+  }
+
+  return {
+    valid: true,
+    kind: 'reseller',
+    code: reseller.code,
+    discount_value: reseller.discount_value,
+    discount_type: reseller.discount_type,
+    message: reseller.discount_value > 0
+      ? `Code ${reseller.code} applied — ${reseller.discount_type === 'percent'
+          ? `${reseller.discount_value}% off`
+          : `SGD ${parseFloat(reseller.discount_value).toFixed(2)} off`}`
+      : `Code ${reseller.code} applied`,
+  };
+}
+
 app.post('/reseller/validate', async (req, res) => {
   try {
     const { code } = req.body;
     if (!code) return res.status(400).json({ error: 'Missing code' });
-
-    // Detect code type by prefix
-    if (code.toUpperCase().startsWith('USR-')) {
-      // User referral code — look up in profiles
-      const { data: referrer, error: refError } = await supabase
-        .from('profiles')
-        .select('id, full_name, referral_code')
-        .eq('referral_code', code.toUpperCase())
-        .single();
-      if (refError || !referrer) {
-        return res.json({ valid: false, message: 'Referral code not found' });
-      }
-      const firstName = (referrer.full_name || 'A friend').split(' ')[0];
-      return res.json({
-        valid:          true,
-        code:           referrer.referral_code,
-        discount_value: 0,
-        discount_type:  'percent',
-        referrer_id:    referrer.id,
-        message:        `Referral code applied — referred by ${firstName}`,
-      });
-    }
-
-    // Reseller code lookup
-    const { data: reseller, error } = await supabase
-      .from('resellers')
-      .select('code, commission_pct, discount_value, discount_type, is_active, start_date, name')
-      .eq('code', code.toUpperCase())
-      .single();
-
-    if (error || !reseller) {
-      return res.json({ valid: false, message: 'Code not found' });
-    }
-
-    if (!reseller.is_active) {
-      return res.json({ valid: false, message: 'This code is no longer active' });
-    }
-
-    // Check start_date
-    if (reseller.start_date && new Date(reseller.start_date) > new Date()) {
-      return res.json({ valid: false, message: 'This code is not yet active' });
-    }
-
-    res.json({
-      valid:          true,
-      code:           reseller.code,
-      discount_value: reseller.discount_value,
-      discount_type:  reseller.discount_type,
-      message:        reseller.discount_value > 0
-        ? `Code ${reseller.code} applied — ${reseller.discount_type === 'percent'
-            ? `${reseller.discount_value}% off`
-            : `SGD ${parseFloat(reseller.discount_value).toFixed(2)} off`}`
-        : `Code ${reseller.code} applied`,
-    });
+    const result = await resolvePromoCode(code);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
