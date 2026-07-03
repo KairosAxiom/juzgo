@@ -1,6 +1,14 @@
 # Juzgo — Living Project Context
-Last updated: July 2, 2026 (Session 17)
-Latest commit: 44bc0b18
+Last updated: July 3, 2026 (Session 18)
+Latest commit: a4e314c7
+
+---
+
+## ⚠️ Pre-Launch Checklist (do NOT go live without these)
+- **Wire up real eSIM QR provisioning.** The order confirmation email (sent from `/order/create` in `server.js`, added Session 18) currently says "Your eSIM QR code will follow in a separate email shortly" — but nothing sends that follow-up yet. `qr_url` on the order is left null. This is safe to leave as-is while only testers are using the site, but it's a broken promise to a real paying customer. Needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired into `/order/create` (or a separate fulfillment step) before real launch. See Session 18 notes below.
+- Fix or remove `/order/wallet-pay` (404 today) — wallet checkout is broken.
+- Confirm Render `ADMIN_EMAIL` = `davidlim@juzgo.world` (Cloudflare side already confirmed Session 17).
+- Password strength enforcement on registration forms.
 
 ---
 
@@ -489,6 +497,38 @@ Next session should:
 - Fix or remove /order/wallet-pay (404 today)
 - Fix corp registration profile bug (needs CorporateRegister.js + server.js — server.js's own handler already inspected and looks correct)
 - Password strength enforcement on registration forms
+- (Later this month) Airalo onboarding → swap worker /airalo/* from MOCK_PACKAGES to live API; re-seed esim_plans from real Airalo data; then Purchases page live eSIM status
+
+---
+
+### Session 18 — July 3, 2026 (corp registration fix + card-payment order fulfillment)
+
+Completed:
+- **Corp registration bug fixed** (commit 2b457c88). Root cause was NOT the trigger-timing race originally suspected — `CorporateRegister.js` never called `supabase.auth.signUp()` at all. It collected a password but sent the raw form straight to `/corporate/register`, which requires `user_id` and had none, so the request should have 400'd outright. On top of that, `server.js`'s profile-upgrade `.update().eq('id', user_id)` silently no-ops on zero matched rows (Supabase doesn't error), which is the real source of "is_corporate not always set" if a user_id ever *was* present. Fixed both: `CorporateRegister.js` now calls `auth.signUp()` client-side and passes the resulting `user_id`; `server.js`'s profile update now retries up to 5x (400ms apart), confirms via `.select('id')` that a row was actually updated, and rolls back the orphaned `corporates` row if it never succeeds.
+- **Card-payment order fulfillment built** (commit a4e314c7) — the actual fix for Session 17's "test purchase end-to-end" item. Added `POST /order/create` in `server.js`: verifies the PaymentIntent server-side via `stripe.paymentIntents.retrieve()` (never trusts the client), pulls plan details from `esim_plans`, writes the `orders` row, sends the confirmation email via `sendEmail()`, idempotent against a new `stripe_payment_intent_id` column. Also fixed `/create-payment-intent` metadata bug flagged Session 17 (was hardcoded `source: 'wallet_topup'` for everything, didn't accept `planId`). `Checkout.js`'s card branch now calls `/order/create` right after `confirmCardPayment()` succeeds and navigates with the real `order` object; if order creation fails post-payment, it does NOT show an error (card's already charged) — logs it and falls back to plan/country state so the confirmation page still renders coherently.
+- **Required migration run** (Supabase SQL Editor, `esimconnect`/Juzgo project): `ALTER TABLE orders ADD COLUMN stripe_payment_intent_id text` + unique index. Confirmed via `information_schema.tables` that `orders` lives in `public` schema on the correct project (there was a brief mix-up checking the wrong Supabase project — AxiomAnare instead of Juzgo — resolved).
+- **End-to-end verified**: real Stripe sandbox test purchase → order appears in `/purchases` (JZ-4P8AXCEL, COMPLETED, SGD 16.00) → confirmation email received at hello@juzgo.world sender, correct order details.
+
+Files changed:
+- src/pages/CorporateRegister.js (commit 2b457c88)
+- Server/server.js (commits 2b457c88, a4e314c7)
+- src/pages/Checkout.js (commit a4e314c7)
+- Supabase schema: orders.stripe_payment_intent_id column + index (SQL Editor — not in repo)
+
+Verified: corp registration flow not re-tested this session (fix pushed, live-tested registration still pending); card-payment purchase → order → email fully verified end-to-end.
+
+NOT verified / flagged:
+- Corp registration fix (2b457c88) not yet tested with a real signup — do that before relying on it
+- **eSIM QR provisioning still does not exist.** Confirmation email says "Your eSIM QR code will follow in a separate email shortly" but nothing sends it — `qr_url` is left null on every order. Intentionally deferred (no real customers yet, testers only) but MUST be wired up before real launch — see Pre-Launch Checklist at top of this doc. Needs the Cloudflare worker's `/airalo/orders` request/response contract reviewed (not available this session).
+- `/order/wallet-pay` still 404 — untouched this session
+- Render `ADMIN_EMAIL` still not re-confirmed (was correct per Session 16 dump)
+
+Next session should:
+- Test corp registration end-to-end with a real signup
+- Wire up eSIM QR provisioning ahead of real launch (see Pre-Launch Checklist)
+- Fix or remove /order/wallet-pay (404 today)
+- Password strength enforcement on registration forms
+- Confirm Render ADMIN_EMAIL = davidlim@juzgo.world
 - (Later this month) Airalo onboarding → swap worker /airalo/* from MOCK_PACKAGES to live API; re-seed esim_plans from real Airalo data; then Purchases page live eSIM status
 
 ---
