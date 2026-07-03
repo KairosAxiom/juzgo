@@ -1,14 +1,15 @@
 # Juzgo — Living Project Context
-Last updated: July 3, 2026 (Session 18)
-Latest commit: a4e314c7
+Last updated: July 3, 2026 (Session 19)
+Latest commit: logo refresh pushed this session — exact hash not captured, run `git log -1 --oneline` to confirm
 
 ---
 
 ## ⚠️ Pre-Launch Checklist (do NOT go live without these)
-- **Wire up real eSIM QR provisioning.** The order confirmation email (sent from `/order/create` in `server.js`, added Session 18) currently says "Your eSIM QR code will follow in a separate email shortly" — but nothing sends that follow-up yet. `qr_url` on the order is left null. This is safe to leave as-is while only testers are using the site, but it's a broken promise to a real paying customer. Needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired into `/order/create` (or a separate fulfillment step) before real launch. See Session 18 notes below.
-- Fix or remove `/order/wallet-pay` (404 today) — wallet checkout is broken.
-- Confirm Render `ADMIN_EMAIL` = `davidlim@juzgo.world` (Cloudflare side already confirmed Session 17).
-- Password strength enforcement on registration forms.
+- **Wire up real eSIM QR provisioning.** Confirmation emails (card and wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch.
+- Password strength enforcement on registration forms (still open).
+- ~~Fix or remove `/order/wallet-pay` (404)~~ — **DONE Session 18**, fully working.
+- ~~Confirm Render `ADMIN_EMAIL`~~ — confirm this is still accurate before launch, wasn't re-checked Session 18 or 19.
+- **Old orders have blank destinations.** The two test orders placed before the Session 19 countries-join fix (`JZ-4P8AXCEL`, `JZ-V4ZFXQC8`) show blank "Destination" in Purchases/email — cosmetic, test data only, not worth a backfill.
 
 ---
 
@@ -529,6 +530,42 @@ Next session should:
 - Fix or remove /order/wallet-pay (404 today)
 - Password strength enforcement on registration forms
 - Confirm Render ADMIN_EMAIL = davidlim@juzgo.world
+- (Later this month) Airalo onboarding → swap worker /airalo/* from MOCK_PACKAGES to live API; re-seed esim_plans from real Airalo data; then Purchases page live eSIM status
+
+---
+
+### Session 19 — July 3, 2026 (eWallet fully wired + Stripe webhook fix + destination bug fix + logo refresh)
+
+Completed:
+- **eWallet top-up fixed** — `Wallet.js` was calling `/wallet/create-topup-intent`, a route that never existed anywhere in `server.js` (confirmed by the classic "Unexpected token '<'" error — Express's default 404 page is HTML, not JSON). Fixed by pointing it at `/create-payment-intent` (already existed, already had full webhook-side crediting logic sitting unused) and passing `userId` so the webhook credits the right profile. Added a ~2.5s delayed balance refetch after a successful top-up.
+- **eWallet spend fixed** — added the missing `POST /order/wallet-pay` endpoint (mirrors `/order/create`'s logic: resolve promo code, write order, email receipt — but deducts `wallet_balance` instead of going through Stripe). Order is written before the balance is touched, so a DB failure can't deduct money for nothing.
+- **Promo/referral routing bug found and fixed** — refactored `/reseller/validate`'s inline logic into a shared `resolvePromoCode()` helper, used by both `/order/create` and `/order/wallet-pay`. Previously (Session 18's `/order/create`) every promo code was written to `orders.referral_code` regardless of type — would have silently broken reseller commission tracking, since `reseller/my-stats` reads `orders.reseller_code` specifically. Now correctly splits: USR- codes → `referral_code`, reseller codes → `reseller_code` + `discount_sgd`. Referral credit (`processReferralCredit`) now actually fires on both card and wallet purchases — previously it was defined but never called from either purchase path.
+- **Stripe webhook found completely misconfigured** — the `juzgo-webhook` endpoint in Stripe (esimconnect sandbox) was still pointed at the dead `juzgo-backend.onrender.com` (same stale-hostname issue Session 17 fixed on the Cloudflare side, but nobody had touched the Stripe side). 100% failure rate on `payment_intent.succeeded` deliveries — this is *why* wallet top-ups were never crediting even before the endpoint-name bug above. Fixed by editing the destination URL in Stripe Workbench → Webhooks to `https://esimconnect-backend.onrender.com/webhook`. Signing secret was unchanged by the edit (confirmed character-for-character match against Render's `STRIPE_WEBHOOK_SECRET`, no action needed there). Verified via a fresh top-up crediting automatically with no manual resend required (Render logs: `Wallet credited: ... amount=SGD10 new_balance=SGD60`).
+- **Order destination bug found and fixed** — `esim_plans` has no `country_name`/`country_code` columns at all; country data lives in a separate `countries` table joined via `esim_plans.country_id`. Both `/order/create` and `/order/wallet-pay` were reading nonexistent flat columns (always `undefined`), which is why one wallet-purchase order showed a blank "Destination". Fixed by adding `.select('*, countries(name, code, flag_emoji)')` to both plan lookups and reading `plan.countries?.name` / `plan.countries?.code`. No migration needed — verified via a fresh Egypt purchase showing the destination correctly everywhere (email + Purchases).
+- **Logo refreshed** — replaced the old blue clip-art globe (which was already off-brand — all blue, when the actual "Juzgo Refresh" design system below defines green `#1E8E5E` as primary and blue `#2A6FDB` as a secondary accent only) with a new pin mark: a location-pin head standing on a small ground disc, blue accent dot for the eSIM "signal." Iterated through a few concepts (orbit-signal globe, network-dot globe, pin) before settling on the pin — most ownable/distinctive, holds up better at small sizes like a favicon than fine globe linework would. `GlobeLogo.js` rewritten in place (same `size`/`variant` prop interface, so any other usage site picks up the change automatically — only confirmed usage site is `Navbar.js`, which previously had its own separately-duplicated inline copy of the globe SVG plus a CSS-animated orbiting dot; both replaced by importing the shared component). Wordmark sized up 30% (52px→68px, mobile 42px→55px) and pulled tight against the icon per feedback. Dead animation CSS removed from `Navbar.module.css` (`.globeSvg`, `.globeLon`, `.globeLat`, `.globeOrbit`, `.globeDot`, `.globeLands`, `.globeLon2`, and the `spinLon`/`spinLat`/`orbitDot`/`rotateGlobe` keyframes — none of it applies to a static icon).
+
+Files changed:
+- src/pages/Wallet.js
+- Server/server.js (order/wallet-pay endpoint, resolvePromoCode refactor, countries join fix)
+- src/components/GlobeLogo.js (full rewrite)
+- src/components/Navbar.js (now imports GlobeLogo instead of duplicating it)
+- src/components/Navbar.module.css (sizing + dead CSS removal)
+- Stripe dashboard: juzgo-webhook destination URL corrected (not in repo)
+
+Verified: wallet top-up → webhook → balance credit, fully working (fresh top-up, no manual intervention). Wallet spend → order → email, fully working (Egypt test purchase, SGD 4.00, correct destination throughout). Logo live on production, confirmed via screenshot — renders correctly in navbar at real size against the hero.
+
+NOT verified / flagged:
+- Corp registration fix (Session 18, commit 2b457c88) still not tested with a real signup
+- Two pre-Session-19 test orders (JZ-4P8AXCEL, JZ-V4ZFXQC8) have blank destinations from the countries-join bug — cosmetic, test data, not worth backfilling
+- Exact commit hash for the logo push wasn't captured in this session's log — run `git log --oneline -5` next session to confirm what actually landed
+- The ground-disc's outline ring is quite subtle at real navbar size (~66px) — noted as acceptable, not revisited
+
+Next session should:
+- Test corp registration end-to-end with a real signup (carried over from Session 18, still not done)
+- Wire up eSIM QR provisioning ahead of real launch (see Pre-Launch Checklist)
+- Password strength enforcement on registration forms
+- Confirm Render ADMIN_EMAIL = davidlim@juzgo.world
+- Generate favicon files from the new pin mark (public/ static assets — separate from the React component work done this session)
 - (Later this month) Airalo onboarding → swap worker /airalo/* from MOCK_PACKAGES to live API; re-seed esim_plans from real Airalo data; then Purchases page live eSIM status
 
 ---
