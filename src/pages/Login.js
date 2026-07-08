@@ -23,9 +23,23 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+    const { data: signInData, error: err } = await supabase.auth.signInWithPassword({ email, password });
+    if (err) { setLoading(false); setError(err.message); return; }
+
+    // Admin-created staff accounts (Session 20) carry a temporary password
+    // and must set a new one before doing anything else.
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('must_change_password')
+      .eq('id', signInData.user.id)
+      .maybeSingle();
     setLoading(false);
-    if (err) { setError(err.message); return; }
+
+    if (profile?.must_change_password) {
+      navigate('/force-password-change');
+      return;
+    }
+
     const redirect = searchParams.get('redirect');
     navigate(redirect === 'itinerary' ? '/itinerary' : '/dashboard');
   }

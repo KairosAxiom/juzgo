@@ -128,8 +128,9 @@ export default function CorporateDashboard() {
   const [orders, setOrders] = useState([]);
   const [totalSpend, setTotalSpend] = useState('0.00');
 
-  // Invite form
-  const [inviteEmail, setInviteEmail] = useState('');
+  // Create staff account form
+  const [staffName, setStaffName] = useState('');
+  const [staffEmail, setStaffEmail] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMsg, setInviteMsg] = useState('');
   const [inviteError, setInviteError] = useState('');
@@ -177,22 +178,28 @@ export default function CorporateDashboard() {
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
 
-  // ── Send invite ───────────────────────────────────────────────
-  async function handleInvite(e) {
+  // ── Create staff account ────────────────────────────────────────
+  async function handleCreateStaff(e) {
     e.preventDefault();
     setInviteMsg(''); setInviteError('');
-    if (!inviteEmail.trim()) return;
+    if (!staffName.trim() || !staffEmail.trim()) return;
     setInviteLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/corporate/invite`, {
+      const res = await fetch(`${BACKEND}/corporate/staff/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ corp_id: corpId, email: inviteEmail.trim(), invited_by_user_id: userId }),
+        body: JSON.stringify({
+          corp_id: corpId,
+          full_name: staffName.trim(),
+          email: staffEmail.trim(),
+          created_by_user_id: userId,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setInviteMsg(`Invite sent to ${inviteEmail}`);
-      setInviteEmail('');
+      setInviteMsg(`Account created for ${staffEmail} — login details sent by email.`);
+      setStaffName('');
+      setStaffEmail('');
       fetchDashboard();
     } catch (err) {
       setInviteError(err.message);
@@ -308,27 +315,40 @@ export default function CorporateDashboard() {
               ))}
             </div>
 
-            {/* Quick invite */}
+            {/* Quick create staff account */}
             <div className={styles.quickInvite}>
-              <h3 className={styles.subTitle}>Invite a Staff Member</h3>
-              <form onSubmit={handleInvite} className={styles.inviteRow}>
+              <h3 className={styles.subTitle}>Create a Staff Account</h3>
+              <p className={styles.formNote} style={{ margin: '0 0 12px' }}>
+                Staff email must use your company's domain{corp?.email_domain ? ` (@${corp.email_domain})` : ''}.
+                A temporary password is generated and emailed to them automatically.
+              </p>
+              <form onSubmit={handleCreateStaff} className={styles.inviteRow}>
+                <input
+                  className={styles.input}
+                  type="text"
+                  placeholder="Jane Smith"
+                  value={staffName}
+                  onChange={e => setStaffName(e.target.value)}
+                  required
+                />
                 <input
                   className={styles.input}
                   type="email"
-                  placeholder="staff@company.com"
-                  value={inviteEmail}
-                  onChange={e => setInviteEmail(e.target.value)}
+                  placeholder={corp?.email_domain ? `jane@${corp.email_domain}` : 'staff@company.com'}
+                  value={staffEmail}
+                  onChange={e => setStaffEmail(e.target.value)}
                   required
                 />
                 <button type="submit" className={styles.primaryBtn} disabled={inviteLoading}>
-                  {inviteLoading ? 'Sending…' : 'Send Invite'}
+                  {inviteLoading ? 'Creating…' : 'Create Account'}
                 </button>
               </form>
               {inviteMsg && <p className={styles.successMsg}>{inviteMsg}</p>}
               {inviteError && <p className={styles.errorMsg}>{inviteError}</p>}
             </div>
 
-            {/* Pending invites */}
+            {/* Pending invites — legacy, will always be empty under the
+                new admin-created flow; left in place harmlessly */}
             {pendingInvites.length > 0 && (
               <div className={styles.pendingBox}>
                 <h3 className={styles.subTitle}>Pending Invites ({pendingInvites.length})</h3>
@@ -353,7 +373,7 @@ export default function CorporateDashboard() {
             <div className={styles.sectionHeader}>
               <h2 className={styles.sectionTitle}>Staff Members</h2>
               <button className={styles.primaryBtn} onClick={() => setTab('overview')}>
-                + Invite Staff
+                + Create Staff Account
               </button>
             </div>
 

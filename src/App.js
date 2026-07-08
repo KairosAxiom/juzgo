@@ -18,7 +18,7 @@ import SavedItineraries from './pages/SavedItineraries';
 import TermsAndConditions from './pages/TermsAndConditions';
 import CorporateRegister from './pages/CorporateRegister';
 import CorporateDashboard from './pages/CorporateDashboard';
-import CorporateInvite from './pages/CorporateInvite';
+import ForcePasswordChange from './pages/ForcePasswordChange';
 import ResetPassword from './pages/ResetPassword';
 
 function App() {
@@ -58,7 +58,7 @@ function App() {
         <Route path="/terms"                 element={<TermsAndConditions />} />
         <Route path="/corporate/register"    element={<CorporateRegister />} />
         <Route path="/corporate/dashboard"   element={<CorporateDashboard />} />
-        <Route path="/corporate/invite/:token" element={<CorporateInvite />} />
+        <Route path="/force-password-change" element={<ForcePasswordChange />} />
         <Route path="/reset-password"         element={<ResetPassword />} />
         <Route path="*"                      element={<Navigate to="/" replace />} />
       </Routes>

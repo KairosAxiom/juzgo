@@ -1329,6 +1329,7 @@ app.post('/corporate/register', async (req, res) => {
         company_country,
         uen: uen || null,
         contact_email: contact_email.toLowerCase(),
+        email_domain: contact_email.toLowerCase().split('@')[1],
         is_active: false,
         approval_status: 'pending',
       })
@@ -1416,7 +1417,134 @@ app.post('/corporate/register', async (req, res) => {
   }
 });
 
-// POST /corporate/invite — send staff invite (stored in corp_invites)
+// POST /corporate/staff/create — admin creates a staff account directly.
+// Supersedes the old invite/accept flow (kept below, unused, for reference
+// only). Domain-locked: staff can only be created on the company's own
+// verified email domain, so a colleague can never ride the corp wallet on
+// a personal email address. No self-registration, no invite token — the
+// admin's action of creating the account IS the approval.
+app.post('/corporate/staff/create', async (req, res) => {
+  const { corp_id, full_name, email, created_by_user_id } = req.body;
+  if (!corp_id || !full_name || !email || !created_by_user_id) {
+    return res.status(400).json({ error: 'corp_id, full_name, email and created_by_user_id are required' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+
+  try {
+    // Confirm requester is an approved admin of this corp
+    const { data: requester, error: reqErr } = await supabase
+      .from('profiles')
+      .select('corp_id, corp_role')
+      .eq('id', created_by_user_id)
+      .single();
+    if (reqErr || !requester) return res.status(403).json({ error: 'Profile not found' });
+    if (requester.corp_id !== corp_id || requester.corp_role !== 'admin') {
+      return res.status(403).json({ error: 'Only corp admins can create staff accounts' });
+    }
+
+    // Domain lock — the actual enforcement point
+    const { data: corp, error: corpErr } = await supabase
+      .from('corporates')
+      .select('company_name, email_domain, is_active')
+      .eq('id', corp_id)
+      .single();
+    if (corpErr || !corp) return res.status(404).json({ error: 'Corporate account not found' });
+
+    const emailDomain = cleanEmail.split('@')[1];
+    if (!corp.email_domain || emailDomain !== corp.email_domain) {
+      return res.status(400).json({
+        error: `Staff accounts must use a ${corp.email_domain || 'company'} email address.`,
+      });
+    }
+
+    // Generate a secure random temporary password
+    const tempPassword = require('crypto').randomBytes(9).toString('base64').replace(/[+/=]/g, 'x') + 'A1!';
+
+    // Create the auth user directly (admin API — service role key required,
+    // already configured for this backend). Email pre-confirmed since the
+    // admin already vouches for this person.
+    const { data: created, error: createErr } = await supabase.auth.admin.createUser({
+      email: cleanEmail,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: { full_name },
+    });
+    if (createErr) {
+      const msg = /already registered|already exists/i.test(createErr.message || '')
+        ? 'An account with this email already exists.'
+        : createErr.message;
+      return res.status(400).json({ error: msg });
+    }
+
+    const newUserId = created?.user?.id;
+    if (!newUserId) throw new Error('Account creation did not return a user id.');
+
+    // Upgrade the profile — same retry-and-verify pattern as corp
+    // registration (Session 18 fix), since the on-signup trigger that
+    // creates the profiles row can lag slightly behind this call returning.
+    let profileUpdated = false;
+    for (let attempt = 0; attempt < 5 && !profileUpdated; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 400));
+      const { data: updatedRows, error: profErr } = await supabase
+        .from('profiles')
+        .update({
+          is_corporate: true,
+          corp_id,
+          corp_role: 'staff',
+          full_name,
+          must_change_password: true,
+        })
+        .eq('id', newUserId)
+        .select('id');
+      if (profErr) throw profErr;
+      if (updatedRows && updatedRows.length > 0) profileUpdated = true;
+    }
+    if (!profileUpdated) {
+      // Roll back the orphaned auth user so we don't leave a login-capable
+      // account with no corp link and no way to complete setup.
+      await supabase.auth.admin.deleteUser(newUserId);
+      return res.status(500).json({
+        error: 'Could not finish setting up the staff account. Please try again.',
+      });
+    }
+
+    // Email credentials to the new staff member
+    await sendEmail({
+      to: cleanEmail,
+      subject: `Your Juzgo Corporate account — ${corp.company_name}`,
+      text: [
+        `Hi ${full_name},`,
+        ``,
+        `An account has been created for you on Juzgo, linked to ${corp.company_name}'s corporate account.`,
+        ``,
+        `Login email:    ${cleanEmail}`,
+        `Temporary password: ${tempPassword}`,
+        ``,
+        `Log in at https://juzgo.world/login — you'll be asked to set a new`,
+        `password on first login.`,
+        ``,
+        `If you have any questions, contact us at hello@juzgo.world.`,
+        ``,
+        `The Juzgo Team`,
+      ].join('\n'),
+    });
+
+    console.log(`[CORP] Staff account created: ${cleanEmail} — corp: ${corp_id}`);
+
+    return res.json({ success: true, user_id: newUserId, email: cleanEmail });
+  } catch (err) {
+    console.error('POST /corporate/staff/create', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// DEPRECATED — old token-based invite/accept flow. Superseded by
+// POST /corporate/staff/create above (Session 20). Left in place, unused,
+// as reference only — not called by the frontend anymore.
+// ─────────────────────────────────────────────────────────────────────────
+
 app.post('/corporate/invite', async (req, res) => {
   const { corp_id, email, invited_by_user_id } = req.body;
   if (!corp_id || !email) {
