@@ -1,15 +1,17 @@
 # Juzgo — Living Project Context
-Last updated: July 3, 2026 (Session 19)
-Latest commit: logo refresh pushed this session — exact hash not captured, run `git log -1 --oneline` to confirm
+Last updated: July 8, 2026 (Session 20)
+Latest commit: run `git log -1 --oneline` to confirm (last known: "Add explicit two-step review/confirm for corp wallet purchases")
 
 ---
 
 ## ⚠️ Pre-Launch Checklist (do NOT go live without these)
-- **Wire up real eSIM QR provisioning.** Confirmation emails (card and wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch.
-- Password strength enforcement on registration forms (still open).
-- ~~Fix or remove `/order/wallet-pay` (404)~~ — **DONE Session 18**, fully working.
-- ~~Confirm Render `ADMIN_EMAIL`~~ — confirm this is still accurate before launch, wasn't re-checked Session 18 or 19.
-- **Old orders have blank destinations.** The two test orders placed before the Session 19 countries-join fix (`JZ-4P8AXCEL`, `JZ-V4ZFXQC8`) show blank "Destination" in Purchases/email — cosmetic, test data only, not worth a backfill.
+- **Wire up real eSIM QR provisioning.** Confirmation emails (card, wallet, and now corp-wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch.
+- **Build the Admin Corporate approval tab.** Confirmed Session 20: `Admin.js` has ZERO references to "corporate" anywhere — no pending/approved sections, no Approve button, despite the backend endpoints (`GET /admin/corporates`, `POST /admin/corporates/:id/approve`) already existing and working. Right now the ONLY way to approve a new corporate/tour-agency application is raw SQL in Supabase's SQL Editor. This blocks real launch — you can't manually SQL-approve every future applicant.
+- Password strength enforcement on registration forms (still open — Register.js only, note CorporateRegister.js and the staff-creation flow already enforce ≥8 chars).
+- **Old orphaned test data needs cleanup before launch:** `davidlim@juzgo.world`'s profile has `is_corporate=true` with a `corp_id` pointing at a deleted corp (harmless for admin login, but messy); several test `corporates` rows exist (Worldwide Pte Ltd / eSimConnect World Pte Ltd, Juzgo Test Corp) that should be deleted or clearly marked before going live.
+- ~~Fix or remove `/order/wallet-pay` (404)~~ — DONE Session 18.
+- ~~Confirm Render `ADMIN_EMAIL`~~ — confirmed correct, `davidlim@juzgo.world`.
+- **Old orders have blank destinations.** Cosmetic, test data only (unchanged from Session 19).
 
 ---
 
@@ -57,6 +59,7 @@ Latest commit: logo refresh pushed this session — exact hash not captured, run
   - Forwards to Anthropic Claude API (model: claude-sonnet-4-6)
   - Includes scheduled keep-alive cron for Supabase (every 3 days 09:00 UTC)
   - IMPORTANT: Always include `model` field in fetch calls or Anthropic returns "field required" error
+- Email Routing: davidlim@juzgo.world → kairosventure.io@gmail.com — confirmed live July 8, 2026 (Session 20). Check this inbox, not a separate esimconnect.com address, when testing any flow that emails ADMIN_EMAIL (corp registration, admin notifications, etc). Two more rules added Session 20 for corp testing, same destination: corptest@juzgo.world, staff1@juzgo.world.
 
 ## Render (Backend)
 - Service: juzgo-backend
@@ -570,6 +573,70 @@ Next session should:
 
 ---
 
+### Session 20 — July 8, 2026 (Corp registration live-testing, org unification design, domain-locked staff creation, corp wallet checkout)
+
+**This was a long session that shifted scope mid-way** — started as "test corp registration end-to-end" (carried over from Sessions 18/19), surfaced that several corporate features described as built in earlier CONTEXT.md entries do not actually exist in the live code, then expanded into a full redesign of how corporate (and future tour-agency) staff accounts work, ending with a rebuilt corp checkout flow. Everything below actually happened and was live-tested unless marked otherwise.
+
+**Part 1 — Live-testing corp registration surfaced real regressions:**
+- `/corporate/dashboard` had **no route at all** in `App.js` — fixed.
+- The staff invite email linked to `/corporate/invite/:token`, but `App.js` only routed `/corporate/accept`, and that routed component (`CorporateAccept.js`) turned out to be an incomplete/broken stand-in anyway (never called `auth.signUp()`, posted to a nonexistent endpoint). The correct, matching component (`CorporateInvite.js`) existed in the repo but was never routed. This whole flow has since been replaced entirely (see Part 3), so this fix was superseded within the same session — not wasted, just short-lived.
+- **The Navbar's "🏢 Corp Portal" link for logged-in corp users was missing** — added back in Session 12 per old CONTEXT.md notes, silently dropped during Session 19's logo-refresh Navbar rewrite. Restored, plus added a new "Corporate ▾" dropdown (Register/Login) for logged-out users, since `/corporate/register` had zero discoverability from the nav before this.
+- **Admin panel has NO Corporate approval tab at all** — confirmed via full-file grep, zero references to "corporate" anywhere in `Admin.js`, despite the backend endpoints (`GET /admin/corporates`, `POST /admin/corporates/:id/approve`) existing and working. This is now the top item on the Pre-Launch Checklist. Approvals this session were done via raw SQL (`UPDATE corporates SET is_active=true, approval_status='approved' WHERE ...`) as a workaround — Supabase Table Editor's boolean-cell click-to-toggle proved unreliable in testing; SQL Editor with an explicit `UPDATE ... RETURNING` is the reliable path.
+- **Checkout.js had NO corp wallet payment option at all** — zero references to `corp_wallet`, despite CONTEXT.md describing it as built. This is fixed as of this session (see Part 4).
+
+**Part 2 — Org unification design (planning only, not built):**
+Discussed a second target customer — tour agencies wanting to gift/discount eSIMs to tour group members, who should keep their account afterward as ordinary personal users. This doesn't fit the current rigid one-org-per-user `corporates`/`profiles.corp_id` model. Designed a unified `organizations`/`org_links`/`org_packages`/`org_codes`/`org_redemptions` schema covering both corporate and tour-agency account types, with corporate staying org-first (admin creates staff) and tour agency being member-first (traveler registers personally, then redeems a voucher). Full spec, including a pooled monthly-free-credit + prepaid-topup funding model for tour agencies, written to **`ORG-UNIFICATION-SPEC.md`** and uploaded to Project Knowledge. **This is a genuine future rebuild, not started this session** — what actually got built (Part 3) is a domain-lock/admin-created-staff redesign applied to the EXISTING `corporates`/`profiles.corp_id` schema, not the new `organizations` schema from the spec. The spec's tour-agency half (packages, vouchers, free-credit pool) remains entirely unbuilt.
+
+**Part 3 — Domain-locked, admin-created staff accounts (built + live-tested, replaces the old invite/accept flow):**
+Rationale: protect corporate customers from a colleague riding the company wallet on a personal email address, and simplify the flow (admin's action of creating the account IS the approval — no separate invite/accept round-trip).
+- **Supabase migration** (`migrations/session20_staff_creation.sql`, run in SQL Editor): `corporates.email_domain` (text, backfilled from `contact_email` for existing rows), `profiles.must_change_password` (boolean, default false).
+- **`server.js`**: `contact_email`'s domain now captured into `email_domain` at registration. New `POST /corporate/staff/create` — validates requester is an approved admin, validates the new staff email's domain matches `corp.email_domain` exactly (rejects anything else), creates the auth user directly via `supabase.auth.admin.createUser()` with a system-generated password and `email_confirm: true`, sets `must_change_password: true` on the profile (same retry-and-verify pattern as the Session 18 corp-registration fix), emails login credentials. Old `/corporate/invite*` endpoints left in place, commented as deprecated, unused by the frontend.
+- **`App.js`**: removed the `/corporate/invite/:token` route and `CorporateInvite` import (that whole flow is retired); added `/force-password-change`.
+- **`CorporateDashboard.js`** + `.module.css`: "Invite a Staff Member" (single email field) replaced with "Create a Staff Account" (name + domain-locked email, with the required domain shown inline); button relabeled "+ Create Staff Account". CSS updated for the two-input layout (`flex-wrap`).
+- **`Login.js`**: after successful sign-in, checks `profiles.must_change_password` and redirects to `/force-password-change` instead of the dashboard if set.
+- **`ForcePasswordChange.js`** (new page): forces a new password via `supabase.auth.updateUser()`, clears the flag, then proceeds to `/dashboard`.
+- **Live-tested end to end** using a fresh test company ("Juzgo Test Corp", domain `juzgo.world`, admin `corptest@juzgo.world`) with real Cloudflare Email Routing rules added for `corptest@juzgo.world` and `staff1@juzgo.world` (both → `kairosventure.io@gmail.com`, alongside the existing `davidlim@juzgo.world` rule). Confirmed: off-domain email correctly rejected; on-domain creation succeeded; credentials email delivered; first login forced the password-change screen; subsequent logins skipped it.
+- **Known gotcha hit during testing, worth remembering:** deleting a `corporates`/`profiles` row in Table Editor does NOT delete the underlying `auth.users` row — re-registering the same email then fails silently (auth.signUp() sees an existing user, the profile-creation trigger never fires, backend retry-and-verify fails with "Could not finish setting up your corporate account"). Fix is Supabase → Authentication → Users → delete the orphaned auth user directly, separate from Table Editor.
+
+**Part 4 — Corp wallet checkout (built + live-tested):**
+Per direction discussed: corp-linked accounts (staff AND admin) are **work-purchasing only** — no card, no personal wallet, ever. Every plan purchase auto-deducts from the org's pooled wallet. Personal use requires a separate personal account.
+- **`server.js`**: new `GET /corporate/wallet-balance` (any corp-linked user can read their org's balance — `corporates` table RLS is service-role-only, so the client can't query it directly). New `POST /order/corp-wallet-pay` — validates corp-linked + org active, checks balance covers the plan price; if not, **blocks the purchase AND emails the corp's `contact_email`** ("wallet low, top up needed") automatically; if covered, creates the order (`payment_method='corp_wallet'`) and deducts atomically via the same `increment_corp_wallet` RPC the top-up webhook already uses (called with a negative amount) rather than fetch-then-update.
+- **`Checkout.js`**: corp-linked accounts see no payment method selector at all — no `CardElement`, no personal-wallet toggle. Added a genuine **two-step review/confirm**: first submit only reveals a "Confirm this purchase? SGD X will be deducted... cannot be undone" state (nothing charged yet) plus a "← Back, I'm not ready" link; second submit actually calls the endpoint. This was added specifically to prevent a one-click purchase being mistaken for "just show me my selections" when clicking through to "My Purchases" afterward.
+- **`Dashboard.js`**: corp-linked accounts see "🏢 [Company] wallet — SGD X.XX" instead of a personal wallet, in both the header badge and the Overview stat card; no Top Up button/link shown anywhere.
+- **`Wallet.js`**: corp-linked accounts hitting `/wallet` directly (bypassing the hidden nav link) get a plain explanation instead of a top-up form, pointing them to register a separate personal account for personal use.
+- **Live-tested end to end**: `staff1@juzgo.world` purchased a Germany 1GB/7-day plan (SGD 5.50) from the corp wallet; balance correctly dropped SGD 50.00 → SGD 44.50; confirmation email and order-confirmation page rendered correctly; **admin's Corp Portal → Orders tab correctly showed the staff purchase** (order code, staff name, plan, amount, status, date) — confirming that view was already reading live data correctly, unrelated to anything touched this session.
+- **Not yet tested:** the insufficient-balance block + admin notification email path (never hit it in testing since the wallet always had funds).
+
+**Part 5 — Misc:**
+- **Removed the postal/zip code field from all three Stripe `CardElement` instances** (`Checkout.js`, `Wallet.js`, `CorporateDashboard.js`, via `hidePostalCode: true`) — Juzgo's user base is global (Hong Kong has no postal codes at all; Singapore's are 6 digits vs. the US's 5), so a fixed-format field was actively wrong for a large share of users. Minor tradeoff: loses Stripe's AVS postal-code fraud signal, judged acceptable.
+- Noticed but not fixed: `twemoji.min.js` 404 in browser console (CDN script failing to load, site-wide) — flagged for a future session, unrelated to anything touched this session.
+- Confirmed Cloudflare Email Routing: `davidlim@juzgo.world` → `kairosventure.io@gmail.com` (this was already true; explicitly re-verified and noted in the Cloudflare section above per user request).
+
+**Files changed this session:**
+- `src/App.js`, `src/components/Navbar.js` + `.module.css`
+- `Server/server.js` (staff creation, wallet-balance read, corp-wallet-pay, email_domain capture at registration)
+- `src/pages/CorporateDashboard.js` + `.module.css`
+- `src/pages/Login.js`, `src/pages/ForcePasswordChange.js` (new)
+- `src/pages/Checkout.js`, `src/pages/Dashboard.js`, `src/pages/Wallet.js`
+- `migrations/session20_staff_creation.sql` (new — run manually in Supabase SQL Editor, not an auto-migration)
+- `ORG-UNIFICATION-SPEC.md` (new, uploaded to Project Knowledge — design doc, not code)
+
+**Test data created this session (needs cleanup before launch — see Pre-Launch Checklist):**
+- `corporates` rows: "Worldwide Pte Ltd" / renamed-on-re-registration "eSimConnect World Pte Ltd" (domain `esimconnect.world`, messy history — deleted and recreated once, orphaned auth user issue hit and resolved), "Juzgo Test Corp" (domain `juzgo.world` — the one used for the successful end-to-end tests)
+- `profiles` rows: `davidlim@juzgo.world` has `is_corporate=true` with a `corp_id` pointing at a deleted corp (harmless — doesn't affect admin login — but should be cleaned up before launch); `corptest@juzgo.world` (admin), `staff1@juzgo.world` (staff, password already changed from temporary)
+- Cloudflare Email Routing rules added: `corptest@juzgo.world`, `staff1@juzgo.world` (both → `kairosventure.io@gmail.com`) — fine to leave in place, or remove if you want to tidy up
+
+Next session should:
+- **Build the Admin Corporate approval tab** — now the single biggest blocker to real launch in this feature area; backend is ready, just needs the UI.
+- Test the insufficient-corp-wallet-balance block + admin notification email path (never triggered this session).
+- Clean up test data listed above.
+- Decide whether to proceed with the full `organizations`/`org_links` rebuild from `ORG-UNIFICATION-SPEC.md` (tour agency support) or leave the current domain-locked corporate flow as-is for now and revisit tour agencies later.
+- Wire up eSIM QR provisioning ahead of real launch (carried over, still not started).
+- Password strength enforcement on `Register.js` (personal accounts) — corp/staff flows already enforce ≥8 chars, personal registration does not.
+- Investigate `twemoji.min.js` 404 in console (site-wide, low priority).
+
+---
+
 ## Files In This Project (Key Files)
 ```
 src/App.js                           Routes + ?ref= capture + LanguageProvider
@@ -590,25 +657,30 @@ src/components/TrustBadge.js         Trust signal strip
 src/components/LanguageToggle.js     Language dropdown
 src/pages/Home.js                    Landing page
 src/pages/Plans.js                   eSIM plan browser
-src/pages/Login.js                   Login + forgot password
+src/pages/Login.js                   Login + forgot password + must_change_password redirect (Session 20)
 src/pages/Register.js                Register + nickname field
 src/pages/ResetPassword.js           Password reset (Supabase recovery token)
+src/pages/ForcePasswordChange.js     Forced password change for admin-created staff accounts (new, Session 20)
 src/pages/LoginSuccess.js            Email verify prompt (redirect-aware)
-src/pages/Dashboard.js               Overview/Referral/Reseller tabs
-src/pages/Checkout.js                Card + wallet + promo codes
+src/pages/Dashboard.js               Overview/Referral/Reseller tabs — shows corp wallet for corp-linked accounts (Session 20)
+src/pages/Checkout.js                Card + wallet + promo codes; corp-linked accounts get corp-wallet-only checkout with two-step confirm (Session 20)
 src/pages/OrderConfirmation.js       Post-purchase
-src/pages/Wallet.js                  eWallet top-up
+src/pages/Wallet.js                  eWallet top-up; blocked entirely for corp-linked accounts (Session 20)
 src/pages/Itinerary.js               4-stage AI planner + map + save/share/update
 src/pages/SavedItineraries.js        Saved trips list: Open/Share/Delete
 src/pages/Purchases.js               Order history
 src/pages/FindMyOrder.js             Guest order lookup
-src/pages/Admin.js                   7-tab admin panel
-src/pages/CorporateRegister.js       Corporate signup
-src/pages/CorporateAccept.js         Invite token accept
+src/pages/Admin.js                   7-tab admin panel — NO Corporate tab exists (Session 20 finding, top Pre-Launch item)
+src/pages/CorporateRegister.js       Corporate signup — now captures email_domain (Session 20)
+src/pages/CorporateDashboard.js      Corp admin dashboard — "Create a Staff Account" (domain-locked, replaces old invite form, Session 20)
+src/pages/CorporateInvite.js         DEPRECATED Session 20 — unrouted, kept for reference only
+src/pages/CorporateAccept.js         DEPRECATED — was routed but broken; removed from routing Session 20
 src/pages/TermsAndConditions.js      T&C
 src/pages/Pages.module.css           Shared styles (SavedItineraries, FindMyOrder etc)
-Server/server.js                     Express backend — all API endpoints
+Server/server.js                     Express backend — all API endpoints, incl. /corporate/staff/create, /corporate/wallet-balance, /order/corp-wallet-pay (Session 20)
 Server/.env                          Backend env vars (not tracked by Git)
+migrations/session20_staff_creation.sql  Manual SQL migration — corporates.email_domain, profiles.must_change_password (Session 20, not auto-applied)
+ORG-UNIFICATION-SPEC.md              Design spec for future organizations/org_links rebuild (Session 20, Project Knowledge — not code)
 ```
 
 ---
