@@ -11,7 +11,7 @@ const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
 
 const STEPS = ['Details', 'Review', 'Payment'];
 
-function CheckoutForm({ plan, country, user, walletBalance }) {
+function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWallet }) {
   const stripe = useStripe();
   const elements = useElements();
   const navigate = useNavigate();
@@ -53,7 +53,20 @@ function CheckoutForm({ plan, country, user, walletBalance }) {
     setLoading(true);
     try {
       const backend = process.env.REACT_APP_BACKEND_URL;
-      if (payMethod === 'wallet') {
+      if (isCorporate) {
+        // Corp-linked accounts (Session 20): work-purchasing only, no card,
+        // no personal wallet — every purchase draws from the org's pooled
+        // wallet automatically.
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch(`${backend}/order/corp-wallet-pay`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ planId: plan.id }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Payment failed');
+        navigate('/order-confirmation', { state: { order: data.order } });
+      } else if (payMethod === 'wallet') {
         const { data: { session } } = await supabase.auth.getSession();
         const res = await fetch(`${backend}/order/wallet-pay`, {
           method: 'POST',
@@ -194,61 +207,81 @@ function CheckoutForm({ plan, country, user, walletBalance }) {
         <div className={styles.card}>
           <h2 className={styles.cardH2}>Payment</h2>
 
-          {/* Card option */}
-          <div
-            className={`${styles.payOption} ${payMethod === 'card' ? styles.payOptionActive : ''}`}
-            onClick={() => setPayMethod('card')}
-          >
-            <div className={styles.payOptionLeft}>
-              <span className={styles.payIcon}>🏦</span>
-              <span className={styles.payLabel}>Credit / debit card</span>
-            </div>
-            <span className={`${styles.radio} ${payMethod === 'card' ? styles.radioActive : ''}`} />
-          </div>
-
-          {/* Wallet option */}
-          {user && (
-            <div
-              className={`${styles.payOption} ${payMethod === 'wallet' ? styles.payOptionActive : ''}`}
-              onClick={() => setPayMethod('wallet')}
-            >
-              <div className={styles.payOptionLeft}>
-                <span className={styles.payIcon}>💳</span>
-                <div>
-                  <div className={styles.payLabel}>Juzgo Wallet</div>
-                  <div className={styles.payMeta}>Balance: SGD {parseFloat(walletBalance || 0).toFixed(2)}</div>
-                </div>
-              </div>
-              <span className={`${styles.radio} ${payMethod === 'wallet' ? styles.radioActive : ''}`} />
-            </div>
-          )}
-
-          {/* Card fields */}
-          {payMethod === 'card' && (
-            <div className={styles.cardFields}>
-              <label className={styles.label}>Name on card</label>
-              <input type="text" placeholder="John Smith" value={name} onChange={(e) => setName(e.target.value)} className={styles.input} required />
-              <label className={styles.label}>Email</label>
-              <input type="email" placeholder="your@email.com" value={email} onChange={(e) => setEmail(e.target.value)} className={styles.input} required />
-              <label className={styles.label}>Card details</label>
-              <div className={styles.cardElement}>
-                <CardElement options={{ style: { base: { fontFamily: 'Hanken Grotesk, sans-serif', fontSize: '15px', color: '#16271E', '::placeholder': { color: '#9AA89F' } } } }} />
-              </div>
-            </div>
-          )}
-
-          {payMethod === 'wallet' && (
+          {isCorporate ? (
+            // Corp-linked accounts: no payment choice at all — every
+            // purchase draws from the org's wallet automatically. No card
+            // form, no personal wallet option.
             <div className={styles.walletInfo}>
-              Paying with your Juzgo Wallet. <strong>SGD {total}</strong> will be deducted, leaving <strong>SGD {(parseFloat(walletBalance || 0) - parseFloat(total)).toFixed(2)}</strong>.
+              Paying from your <strong>corporate wallet</strong>. <strong>SGD {total}</strong> will
+              be deducted from your company's balance
+              {corpWallet != null && (
+                <> (currently <strong>SGD {parseFloat(corpWallet).toFixed(2)}</strong>)</>
+              )}.
+              {corpWallet != null && parseFloat(corpWallet) < parseFloat(total) && (
+                <div className={styles.error} style={{ marginTop: 10 }}>
+                  Your company's wallet balance may not cover this — contact your admin if the purchase fails.
+                </div>
+              )}
             </div>
+          ) : (
+            <>
+              {/* Card option */}
+              <div
+                className={`${styles.payOption} ${payMethod === 'card' ? styles.payOptionActive : ''}`}
+                onClick={() => setPayMethod('card')}
+              >
+                <div className={styles.payOptionLeft}>
+                  <span className={styles.payIcon}>🏦</span>
+                  <span className={styles.payLabel}>Credit / debit card</span>
+                </div>
+                <span className={`${styles.radio} ${payMethod === 'card' ? styles.radioActive : ''}`} />
+              </div>
+
+              {/* Wallet option */}
+              {user && (
+                <div
+                  className={`${styles.payOption} ${payMethod === 'wallet' ? styles.payOptionActive : ''}`}
+                  onClick={() => setPayMethod('wallet')}
+                >
+                  <div className={styles.payOptionLeft}>
+                    <span className={styles.payIcon}>💳</span>
+                    <div>
+                      <div className={styles.payLabel}>Juzgo Wallet</div>
+                      <div className={styles.payMeta}>Balance: SGD {parseFloat(walletBalance || 0).toFixed(2)}</div>
+                    </div>
+                  </div>
+                  <span className={`${styles.radio} ${payMethod === 'wallet' ? styles.radioActive : ''}`} />
+                </div>
+              )}
+
+              {/* Card fields */}
+              {payMethod === 'card' && (
+                <div className={styles.cardFields}>
+                  <label className={styles.label}>Name on card</label>
+                  <input type="text" placeholder="John Smith" value={name} onChange={(e) => setName(e.target.value)} className={styles.input} required />
+                  <label className={styles.label}>Email</label>
+                  <input type="email" placeholder="your@email.com" value={email} onChange={(e) => setEmail(e.target.value)} className={styles.input} required />
+                  <label className={styles.label}>Card details</label>
+                  <div className={styles.cardElement}>
+                    <CardElement options={{ hidePostalCode: true, style: { base: { fontFamily: 'Hanken Grotesk, sans-serif', fontSize: '15px', color: '#16271E', '::placeholder': { color: '#9AA89F' } } } }} />
+                  </div>
+                </div>
+              )}
+
+              {payMethod === 'wallet' && (
+                <div className={styles.walletInfo}>
+                  Paying with your Juzgo Wallet. <strong>SGD {total}</strong> will be deducted, leaving <strong>SGD {(parseFloat(walletBalance || 0) - parseFloat(total)).toFixed(2)}</strong>.
+                </div>
+              )}
+            </>
           )}
 
           <div className={styles.secureNote}>🔒 Payments are encrypted and secure</div>
 
           {error && <div className={styles.error}>{error}</div>}
 
-          <button type="submit" className={styles.btnSubmit} disabled={loading || !stripe}>
-            {loading ? 'Processing…' : `Get my eSIM · SGD ${total} →`}
+          <button type="submit" className={styles.btnSubmit} disabled={loading || (!isCorporate && !stripe)}>
+            {loading ? 'Processing…' : isCorporate ? `Confirm purchase · SGD ${total} →` : `Get my eSIM · SGD ${total} →`}
           </button>
         </div>
       </div>
@@ -262,18 +295,31 @@ export default function Checkout() {
   const { plan, country } = location.state || {};
   const [user, setUser] = useState(null);
   const [walletBalance, setWalletBalance] = useState(0);
+  const [isCorporate, setIsCorporate] = useState(false);
+  const [corpWallet, setCorpWallet] = useState(null);
 
   useEffect(() => {
     if (!plan) navigate('/plans');
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) fetchWallet(session.user.id);
+      if (session?.user) fetchWallet(session.user.id, session.access_token);
     });
   }, []);
 
-  async function fetchWallet(userId) {
-    const { data } = await supabase.from('profiles').select('wallet_balance').eq('id', userId).single();
-    if (data) setWalletBalance(data.wallet_balance);
+  async function fetchWallet(userId, accessToken) {
+    const { data } = await supabase.from('profiles').select('wallet_balance, is_corporate').eq('id', userId).single();
+    if (data) {
+      setWalletBalance(data.wallet_balance);
+      setIsCorporate(!!data.is_corporate);
+      if (data.is_corporate) {
+        const backend = process.env.REACT_APP_BACKEND_URL;
+        const res = await fetch(`${backend}/corporate/wallet-balance`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const corpData = await res.json();
+        if (res.ok) setCorpWallet(corpData.wallet_balance);
+      }
+    }
   }
 
   if (!plan) return null;
@@ -282,7 +328,7 @@ export default function Checkout() {
     <div className={styles.page}>
       <main className={styles.main}>
         <Elements stripe={stripePromise}>
-          <CheckoutForm plan={plan} country={country} user={user} walletBalance={walletBalance} />
+          <CheckoutForm plan={plan} country={country} user={user} walletBalance={walletBalance} isCorporate={isCorporate} corpWallet={corpWallet} />
         </Elements>
       </main>
       <Footer />

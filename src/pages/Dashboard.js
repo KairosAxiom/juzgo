@@ -10,6 +10,8 @@ const TABS = ['Overview', 'Referral', 'Reseller Portal'];
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [corpWallet, setCorpWallet] = useState(null);
+  const [corpName, setCorpName] = useState('');
   const [tab, setTab] = useState('Overview');
   const [referralStats, setReferralStats] = useState(null);
   const [resellerData, setResellerData] = useState(null);
@@ -23,15 +25,26 @@ export default function Dashboard() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { navigate('/login'); return; }
       setUser(session.user);
-      fetchProfile(session.user.id);
+      fetchProfile(session.user.id, session.access_token);
       fetchReferral(session.access_token);
       checkReseller(session.user.id, session.access_token);
     });
   }, []);
 
-  async function fetchProfile(userId) {
+  async function fetchProfile(userId, accessToken) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
     setProfile(data);
+    if (data?.is_corporate) {
+      const backend = process.env.REACT_APP_BACKEND_URL;
+      const res = await fetch(`${backend}/corporate/wallet-balance`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const corpData = await res.json();
+      if (res.ok) {
+        setCorpWallet(corpData.wallet_balance);
+        setCorpName(corpData.company_name || '');
+      }
+    }
   }
 
   async function fetchReferral(token) {
@@ -96,14 +109,26 @@ export default function Dashboard() {
             </h1>
           </div>
           <div className={styles.headerRight}>
-            <div className={styles.walletBadge}>
-              <span className={styles.walletIcon}>💳</span>
-              <div>
-                <div className={styles.walletLabel}>Wallet balance</div>
-                <div className={styles.walletAmount}>SGD {parseFloat(profile.wallet_balance || 0).toFixed(2)}</div>
+            {profile.is_corporate ? (
+              <div className={styles.walletBadge}>
+                <span className={styles.walletIcon}>🏢</span>
+                <div>
+                  <div className={styles.walletLabel}>{corpName || 'Corporate'} wallet</div>
+                  <div className={styles.walletAmount}>SGD {parseFloat(corpWallet || 0).toFixed(2)}</div>
+                </div>
               </div>
-            </div>
-            <button className={styles.btnTopUp} onClick={() => navigate('/wallet')}>Top up →</button>
+            ) : (
+              <>
+                <div className={styles.walletBadge}>
+                  <span className={styles.walletIcon}>💳</span>
+                  <div>
+                    <div className={styles.walletLabel}>Wallet balance</div>
+                    <div className={styles.walletAmount}>SGD {parseFloat(profile.wallet_balance || 0).toFixed(2)}</div>
+                  </div>
+                </div>
+                <button className={styles.btnTopUp} onClick={() => navigate('/wallet')}>Top up →</button>
+              </>
+            )}
           </div>
         </div>
 
@@ -125,9 +150,13 @@ export default function Dashboard() {
           <div className={styles.tabContent}>
             <div className={styles.statsGrid}>
               <div className={styles.statCard}>
-                <div className={styles.statLabel}>Wallet</div>
-                <div className={styles.statValue}>SGD {parseFloat(profile.wallet_balance || 0).toFixed(2)}</div>
-                <button className={styles.btnLink} onClick={() => navigate('/wallet')}>Top up</button>
+                <div className={styles.statLabel}>{profile.is_corporate ? 'Corporate Wallet' : 'Wallet'}</div>
+                <div className={styles.statValue}>
+                  SGD {parseFloat(profile.is_corporate ? corpWallet || 0 : profile.wallet_balance || 0).toFixed(2)}
+                </div>
+                {!profile.is_corporate && (
+                  <button className={styles.btnLink} onClick={() => navigate('/wallet')}>Top up</button>
+                )}
               </div>
               <div className={styles.statCard}>
                 <div className={styles.statLabel}>Purchases</div>

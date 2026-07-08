@@ -135,6 +135,26 @@ export default function Wallet() {
     });
   }, []);
 
+  // Corp-linked accounts (Session 20) are work-purchasing only — no
+  // personal wallet to top up. Redirect rather than showing a form that
+  // wouldn't do anything useful for them.
+  if (profile?.is_corporate) {
+    return (
+      <div className={styles.page}>
+        <main className={styles.main}>
+          <div className={styles.eyebrow}>eWallet</div>
+          <h1 className={styles.h1}>Not available</h1>
+          <p className={styles.sub}>
+            Your account is linked to a corporate wallet — purchases are drawn from
+            your company's balance automatically at checkout. For your own personal
+            travel plans, register a separate personal account with a non-work email.
+          </p>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
   return (
     <div className={styles.page}>
       <main className={styles.main}>

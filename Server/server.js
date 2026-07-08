@@ -336,8 +336,180 @@ app.post('/order/wallet-pay', requireAuth, async (req, res) => {
   }
 });
 
-// POST /order/create — finalize a card-payment purchase (the piece that was
-// missing entirely): verify the Stripe PaymentIntent server-side, write the
+// GET /corporate/wallet-balance — lightweight read for any corp-linked
+// user (staff or admin), used to show the corp wallet on their personal
+// Dashboard/Checkout without exposing the rest of the corporates row
+// (corporates table is service-role-only RLS, so the client can't query
+// it directly).
+app.get('/corporate/wallet-balance', requireAuth, async (req, res) => {
+  const userId = req.authUser.id;
+  try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('is_corporate, corp_id')
+      .eq('id', userId)
+      .single();
+    if (!profile?.is_corporate || !profile?.corp_id) {
+      return res.status(403).json({ error: 'Not a corporate-linked account' });
+    }
+    const { data: corp, error } = await supabase
+      .from('corporates')
+      .select('wallet_balance, company_name, is_active')
+      .eq('id', profile.corp_id)
+      .single();
+    if (error || !corp) return res.status(404).json({ error: 'Corporate account not found' });
+    return res.json({
+      wallet_balance: corp.wallet_balance,
+      company_name: corp.company_name,
+      is_active: corp.is_active,
+    });
+  } catch (err) {
+    console.error('GET /corporate/wallet-balance', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /order/corp-wallet-pay — pay for a plan using the corporate wallet.
+// Session 20: corp-linked accounts (staff and admin) are work-purchasing
+// only — no card, no personal wallet — every purchase draws from the
+// org's pooled wallet_balance automatically. No promo/referral codes here
+// by design; this is an internal work purchase, not a public promo path.
+app.post('/order/corp-wallet-pay', requireAuth, async (req, res) => {
+  const userId = req.authUser.id;
+  const customerEmail = req.authUser.email;
+  const { planId } = req.body;
+
+  if (!planId) return res.status(400).json({ error: 'planId is required' });
+
+  try {
+    const { data: profile, error: profErr } = await supabase
+      .from('profiles')
+      .select('is_corporate, corp_id, full_name')
+      .eq('id', userId)
+      .single();
+    if (profErr || !profile) return res.status(404).json({ error: 'Profile not found' });
+    if (!profile.is_corporate || !profile.corp_id) {
+      return res.status(403).json({ error: 'Not a corporate-linked account' });
+    }
+
+    const { data: corp, error: corpErr } = await supabase
+      .from('corporates')
+      .select('wallet_balance, company_name, contact_email, is_active')
+      .eq('id', profile.corp_id)
+      .single();
+    if (corpErr || !corp) return res.status(404).json({ error: 'Corporate account not found' });
+    if (!corp.is_active) {
+      return res.status(403).json({ error: 'Your corporate account is not active. Contact your admin.' });
+    }
+
+    const { data: plan, error: planErr } = await supabase
+      .from('esim_plans')
+      .select('*, countries(name, code, flag_emoji)')
+      .eq('id', planId)
+      .single();
+    if (planErr || !plan) return res.status(404).json({ error: 'Plan not found' });
+
+    const total = parseFloat(plan.price_sgd || 0);
+    const currentBalance = parseFloat(corp.wallet_balance || 0);
+
+    if (currentBalance < total) {
+      // Block the purchase AND proactively notify the admin so they know
+      // to top up — the staff member never sees a card fallback, so this
+      // is the only signal that gets a top-up moving.
+      await sendEmail({
+        to: corp.contact_email,
+        subject: `[Juzgo] Corporate wallet low — top-up needed (${corp.company_name})`,
+        text: [
+          `Hi,`,
+          ``,
+          `${profile.full_name || customerEmail} tried to purchase a ${plan.plan_name || 'plan'}`,
+          `(SGD ${total.toFixed(2)}) using ${corp.company_name}'s corporate wallet, but the`,
+          `current balance (SGD ${currentBalance.toFixed(2)}) wasn't enough to cover it.`,
+          ``,
+          `The purchase was blocked. Top up the corporate wallet to let staff`,
+          `continue purchasing:`,
+          `https://juzgo.world/corporate/dashboard`,
+          ``,
+          `The Juzgo Team`,
+        ].join('\n'),
+      });
+      return res.status(402).json({
+        error: `Insufficient corporate wallet balance. Please contact your admin to top up.`,
+      });
+    }
+
+    const order_code = 'JZ-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+    const dataAmount = plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`;
+
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .insert({
+        user_id: userId,
+        customer_email: customerEmail,
+        customer_name: profile.full_name || null,
+        country_name: plan.countries?.name || null,
+        country_code: plan.countries?.code || null,
+        package_title: plan.plan_name || null,
+        data_amount: dataAmount,
+        validity_days: plan.validity_days,
+        price_sgd: total,
+        discount_sgd: 0,
+        order_code,
+        status: 'completed',
+        payment_method: 'corp_wallet',
+      })
+      .select()
+      .single();
+    if (orderErr) throw orderErr;
+
+    // Atomic decrement (same RPC the top-up webhook uses to credit, just
+    // negative) rather than fetch-then-update, to avoid a race between two
+    // staff purchasing at the same moment.
+    const { error: deductErr } = await supabase.rpc('increment_corp_wallet', {
+      p_corp_id: profile.corp_id,
+      p_amount: -total,
+    });
+    if (deductErr) {
+      await supabase.from('orders').update({ status: 'wallet_deduction_failed' }).eq('id', order.id);
+      throw deductErr;
+    }
+
+    await sendPushToUser(userId, {
+      title: '✅ Order confirmed',
+      body: `Your ${order.country_name || 'eSIM'} plan is confirmed. Check your email for details.`,
+      url: '/purchases',
+    });
+
+    await sendEmail({
+      to: customerEmail,
+      subject: `Your Juzgo eSIM Order — ${order.order_code}`,
+      text: [
+        `Hi ${profile.full_name || 'there'},`,
+        ``,
+        `Thanks for your purchase! Here are your order details:`,
+        ``,
+        `Order code:  ${order.order_code}`,
+        `Destination: ${order.country_name || '—'}`,
+        `Data:        ${order.data_amount || '—'}`,
+        `Validity:    ${order.validity_days || '—'} days`,
+        `Paid:        SGD ${total.toFixed(2)} (${corp.company_name} corporate wallet)`,
+        ``,
+        `Your eSIM QR code will follow in a separate email shortly.`,
+        ``,
+        `The Juzgo Team`,
+      ].join('\n'),
+    });
+
+    console.log(`[ORDER] Created ${order.order_code} for ${customerEmail} — corp wallet payment (${corp.company_name})`);
+
+    return res.json({ success: true, order });
+  } catch (err) {
+    console.error('POST /order/corp-wallet-pay', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+
 // order row, and email the receipt. Called by Checkout.js right after
 // stripe.confirmCardPayment() succeeds.
 //
