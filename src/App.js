@@ -17,7 +17,8 @@ import FindMyOrder from './pages/FindMyOrder';
 import SavedItineraries from './pages/SavedItineraries';
 import TermsAndConditions from './pages/TermsAndConditions';
 import CorporateRegister from './pages/CorporateRegister';
-import CorporateAccept from './pages/CorporateAccept';
+import CorporateDashboard from './pages/CorporateDashboard';
+import CorporateInvite from './pages/CorporateInvite';
 import ResetPassword from './pages/ResetPassword';
 
 function App() {
@@ -56,7 +57,8 @@ function App() {
         <Route path="/saved-itineraries"     element={<SavedItineraries />} />
         <Route path="/terms"                 element={<TermsAndConditions />} />
         <Route path="/corporate/register"    element={<CorporateRegister />} />
-        <Route path="/corporate/accept"      element={<CorporateAccept />} />
+        <Route path="/corporate/dashboard"   element={<CorporateDashboard />} />
+        <Route path="/corporate/invite/:token" element={<CorporateInvite />} />
         <Route path="/reset-password"         element={<ResetPassword />} />
         <Route path="*"                      element={<Navigate to="/" replace />} />
       </Routes>
