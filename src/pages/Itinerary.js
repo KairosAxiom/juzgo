@@ -28,6 +28,301 @@ const UNIQUE_CATS = [
 
 const PROXY_URL = 'https://claude-proxy.kairosventure-io.workers.dev/';
 
+/* ────────────────────────────────────────────────────────────────────────
+   Geo helpers — day-clustering, within-day sequencing, travel-time calc.
+   None of this depends on Claude's output; it runs entirely on the lat/lng
+   already attached to each place, so it's deterministic and reliable.
+   ──────────────────────────────────────────────────────────────────────── */
+
+function toNum(v) {
+  const n = typeof v === 'string' ? parseFloat(v) : v;
+  return n;
+}
+
+function isValidCoord(v) {
+  const n = toNum(v);
+  return typeof n === 'number' && !isNaN(n) && n !== 0;
+}
+
+/* Great-circle distance in km */
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+/* Assigns each point to its nearest centroid (haversine) */
+function kmeansAssign(pts, centroids) {
+  return pts.map((p) => {
+    let best = 0, bestDist = Infinity;
+    centroids.forEach((c, i) => {
+      const d = haversineKm(p.lat, p.lng, c.lat, c.lng);
+      if (d < bestDist) { bestDist = d; best = i; }
+    });
+    return best;
+  });
+}
+
+function recomputeCentroids(pts, assignments, k, fallback) {
+  return Array.from({ length: k }, (_, ci) => {
+    const members = pts.filter((_, i) => assignments[i] === ci);
+    if (members.length === 0) return fallback[ci];
+    return {
+      lat: members.reduce((s, m) => s + m.lat, 0) / members.length,
+      lng: members.reduce((s, m) => s + m.lng, 0) / members.length,
+    };
+  });
+}
+
+/* Farthest-point sampling for k-means init — spreads initial centroids out
+   across the data instead of risking two starting near each other, which
+   is what plain random init can do at small N. */
+function farthestPointInit(pts, k) {
+  const centroids = [{ lat: pts[0].lat, lng: pts[0].lng }];
+  while (centroids.length < k) {
+    let bestPt = pts[0], bestDist = -1;
+    pts.forEach((p) => {
+      const d = Math.min(...centroids.map((c) => haversineKm(p.lat, p.lng, c.lat, c.lng)));
+      if (d > bestDist) { bestDist = d; bestPt = p; }
+    });
+    centroids.push({ lat: bestPt.lat, lng: bestPt.lng });
+  }
+  return centroids;
+}
+
+/* Lloyd's algorithm (standard k-means) — converges in a handful of
+   iterations at this scale (≤30 points). Minimizes actual within-cluster
+   distance, unlike a 1D axis projection. Doesn't guarantee equal cluster
+   sizes on its own — balanceClusterSizes() handles that afterward. */
+function kmeansCluster(pts, k, maxIter = 25) {
+  let centroids = farthestPointInit(pts, k);
+  let assignments = new Array(pts.length).fill(0);
+  for (let iter = 0; iter < maxIter; iter++) {
+    const next = kmeansAssign(pts, centroids);
+    const changed = next.some((a, i) => a !== assignments[i]);
+    assignments = next;
+    centroids = recomputeCentroids(pts, assignments, k, centroids);
+    if (!changed) break;
+  }
+  return { assignments, centroids };
+}
+
+/* k-means clusters are rarely equal-sized. Repeatedly move the
+   best-fit point (closest to the target cluster's centroid, among points
+   currently in an oversized cluster) from the most-oversized cluster into
+   the most-undersized one, until every day has its target count. */
+function balanceClusterSizes(pts, assignments, centroids, k) {
+  const n = pts.length;
+  const base = Math.floor(n / k);
+  const remainder = n % k;
+  const targetSizes = new Array(k).fill(base);
+  for (let i = 0; i < remainder; i++) targetSizes[i] += 1;
+
+  const assign = [...assignments];
+  const sizesOf = () => {
+    const s = new Array(k).fill(0);
+    assign.forEach((a) => s[a]++);
+    return s;
+  };
+
+  let guard = 0;
+  while (guard++ < n * k) {
+    const s = sizesOf();
+    const overIdx = s.findIndex((count, i) => count > targetSizes[i]);
+    if (overIdx === -1) break; // totals match, so this means every cluster is exactly at target
+    const underIdx = s.findIndex((count, i) => count < targetSizes[i]);
+    if (underIdx === -1) break;
+
+    let bestPtIdx = -1, bestDist = Infinity;
+    pts.forEach((p, i) => {
+      if (assign[i] !== overIdx) return;
+      const d = haversineKm(p.lat, p.lng, centroids[underIdx].lat, centroids[underIdx].lng);
+      if (d < bestDist) { bestDist = d; bestPtIdx = i; }
+    });
+    if (bestPtIdx === -1) break;
+    assign[bestPtIdx] = underIdx;
+  }
+  return assign;
+}
+
+/* Orders the day-clusters into a sensible day-1-through-day-N sequence by
+   chaining centroids nearest-neighbour style — so Day 2 picks up roughly
+   where Day 1 left off, rather than jumping across town and back. */
+function orderClustersByCentroidPath(centroids) {
+  const remaining = centroids.map((c, i) => ({ ...c, idx: i }));
+  const path = [remaining.shift()];
+  while (remaining.length) {
+    const last = path[path.length - 1];
+    let bestI = 0, bestDist = Infinity;
+    remaining.forEach((c, i) => {
+      const d = haversineKm(last.lat, last.lng, c.lat, c.lng);
+      if (d < bestDist) { bestDist = d; bestI = i; }
+    });
+    path.push(remaining.splice(bestI, 1)[0]);
+  }
+  return path.map((c) => c.idx);
+}
+
+/*
+ * Replaces Claude's own "day" guess with a computed one. Runs balanced
+ * k-means on valid coordinates — actual pairwise proximity, not a 1D
+ * approximation — so each day is the set of places genuinely closest to
+ * each other, sized evenly, then orders the resulting days into a sensible
+ * day-1-to-day-N geographic sequence. Places without usable coordinates
+ * (rare — should only be custom user-added places later, not Stage 3
+ * output) fall back to round-robin.
+ */
+function clusterPlacesByDay(places, dayCount) {
+  const safeDayCount = Math.max(1, dayCount);
+  const valid = places
+    .filter((p) => isValidCoord(p.lat) && isValidCoord(p.lng))
+    .map((p) => ({ ...p, lat: toNum(p.lat), lng: toNum(p.lng) }));
+  const invalid = places.filter((p) => !(isValidCoord(p.lat) && isValidCoord(p.lng)));
+
+  if (valid.length === 0) {
+    return places.map((p, i) => ({ ...p, day: p.day || ((i % safeDayCount) + 1) }));
+  }
+  if (valid.length <= safeDayCount) {
+    // Too few points for k-means to be meaningful — one per day is already optimal.
+    const withDay = valid.map((p, i) => ({ ...p, day: i + 1 }));
+    const invalidWithDay = invalid.map((p, i) => ({ ...p, day: p.day || ((i % safeDayCount) + 1) }));
+    return [...withDay, ...invalidWithDay];
+  }
+
+  const { assignments, centroids } = kmeansCluster(valid, safeDayCount);
+  const balanced = balanceClusterSizes(valid, assignments, centroids, safeDayCount);
+  const finalCentroids = recomputeCentroids(valid, balanced, safeDayCount, centroids);
+  const dayOrder = orderClustersByCentroidPath(finalCentroids);
+  const clusterToDay = {};
+  dayOrder.forEach((clusterIdx, i) => { clusterToDay[clusterIdx] = i + 1; });
+
+  const withDay = valid.map((p, i) => ({ ...p, day: clusterToDay[balanced[i]] }));
+  const invalidWithDay = invalid.map((p, i) => ({ ...p, day: p.day || ((i % safeDayCount) + 1) }));
+  return [...withDay, ...invalidWithDay];
+}
+
+/* Total path distance in km, for evaluating 2-opt swaps */
+function pathDistanceKm(path) {
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    total += haversineKm(path[i].lat, path[i].lng, path[i + 1].lat, path[i + 1].lng);
+  }
+  return total;
+}
+
+/* 2-opt local search: repeatedly reverses any segment of the route that
+   shortens total distance, until no improving swap is left. Cleans up the
+   self-crossing paths nearest-neighbour construction is prone to. Cheap at
+   day-sized N (≤10 stops), so it's fine to run to convergence. */
+function twoOptImprove(path, maxPasses = 25) {
+  if (path.length < 4) return path; // need 4+ points for a swap to matter
+  let best = path;
+  let improved = true;
+  let passes = 0;
+  while (improved && passes < maxPasses) {
+    improved = false;
+    passes++;
+    for (let i = 1; i < best.length - 2; i++) {
+      for (let j = i + 1; j < best.length - 1; j++) {
+        const a = best[i - 1], b = best[i], c = best[j], d = best[j + 1];
+        const before = haversineKm(a.lat, a.lng, b.lat, b.lng) + haversineKm(c.lat, c.lng, d.lat, d.lng);
+        const after = haversineKm(a.lat, a.lng, c.lat, c.lng) + haversineKm(b.lat, b.lng, d.lat, d.lng);
+        if (after + 1e-9 < before) {
+          best = [...best.slice(0, i), ...best.slice(i, j + 1).reverse(), ...best.slice(j + 1)];
+          improved = true;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/*
+ * Within a single day, order stops via nearest-neighbour construction, then
+ * clean up with 2-opt so the path doesn't cross itself. Places without
+ * coordinates (custom additions) are appended at the end since we have no
+ * way to place them geographically.
+ */
+function orderStopsWithinDay(dayPlaces) {
+  const withCoords = dayPlaces.filter((p) => isValidCoord(p.lat) && isValidCoord(p.lng));
+  const withoutCoords = dayPlaces.filter((p) => !(isValidCoord(p.lat) && isValidCoord(p.lng)));
+  if (withCoords.length <= 1) return [...withCoords, ...withoutCoords];
+
+  const remaining = withCoords.map((p) => ({ ...p, lat: toNum(p.lat), lng: toNum(p.lng) }));
+  const path = [remaining.shift()];
+  while (remaining.length) {
+    const last = path[path.length - 1];
+    let bestIdx = 0, bestDist = Infinity;
+    remaining.forEach((p, i) => {
+      const d = haversineKm(last.lat, last.lng, p.lat, p.lng);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    });
+    path.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  const optimized = twoOptImprove(path);
+  return [...optimized, ...withoutCoords];
+}
+
+/* Orders every chosen place by day, then geographically within each day */
+function sequencePlaces(places, dayCount) {
+  const ordered = [];
+  for (let day = 1; day <= dayCount; day++) {
+    const dayPlaces = places.filter((p) => Number(p.day) === day);
+    ordered.push(...orderStopsWithinDay(dayPlaces));
+  }
+  // Any place with no day at all (shouldn't normally happen) goes last
+  ordered.push(...places.filter((p) => !p.day));
+  return ordered;
+}
+
+/* Custom places (added free-text in PlacePicker) have no day — drop each
+   into whichever day currently has the fewest stops, so Stage 4 still gets
+   a complete day assignment for every place. */
+function assignMissingDays(places, dayCount) {
+  const counts = new Array(dayCount + 1).fill(0);
+  places.forEach((p) => { if (p.day) counts[p.day] = (counts[p.day] || 0) + 1; });
+  return places.map((p) => {
+    if (p.day) return p;
+    let minDay = 1, minCount = Infinity;
+    for (let d = 1; d <= dayCount; d++) {
+      if ((counts[d] || 0) < minCount) { minCount = counts[d] || 0; minDay = d; }
+    }
+    counts[minDay] = (counts[minDay] || 0) + 1;
+    return { ...p, day: minDay };
+  });
+}
+
+/* Crude but grounded mode/time estimate — replace the body of this
+   function with a real OSRM/OpenRouteService call when that lands; every
+   caller already treats this as "the real travel time", so the swap is a
+   one-function change. */
+function estimateTravelMinutes(km) {
+  if (km <= 1.2) {
+    return { mode: 'walk', mins: Math.max(2, Math.round((km / 4.5) * 60)) };
+  }
+  return { mode: 'transit/taxi', mins: Math.max(5, Math.round((km / 22) * 60)) };
+}
+
+/* Computes travel time only between consecutive same-day stops — the gap
+   between the last stop of one day and the first of the next isn't a
+   walkable/single-trip segment worth quoting a number for. */
+function buildTravelSegments(orderedPlaces) {
+  const segments = [];
+  for (let i = 0; i < orderedPlaces.length - 1; i++) {
+    const a = orderedPlaces[i], b = orderedPlaces[i + 1];
+    if (a.day !== b.day) continue;
+    if (!isValidCoord(a.lat) || !isValidCoord(a.lng) || !isValidCoord(b.lat) || !isValidCoord(b.lng)) continue;
+    const km = haversineKm(toNum(a.lat), toNum(a.lng), toNum(b.lat), toNum(b.lng));
+    const { mode, mins } = estimateTravelMinutes(km);
+    segments.push({ day: a.day, from: a.name, to: b.name, km: Math.round(km * 10) / 10, mode, mins });
+  }
+  return segments;
+}
+
 /* Lightweight markdown renderer for chat bubbles — headers, bold, rules, blockquotes, lists */
 function renderMarkdown(text) {
   const lines = text.split('\n');
@@ -162,15 +457,15 @@ export default function Itinerary() {
     const arrivalLine = arrivalTime ? `Arrival: ${dates.from} at ${arrivalTime}.` : '';
     const departureLine = departureTime ? `Departure: ${dates.to} at ${departureTime}.` : '';
 
-    const prompt = `Recommend exactly ${targetCount} specific real places for a ${dayCount}-day trip to ${destination}, matching: ${cats || 'general sightseeing'}. Traveller wants about ${perDayCount} activities per day.
+    const prompt = `Recommend exactly ${targetCount} specific real places for a ${dayCount}-day trip to ${destination}, matching: ${cats || 'general sightseeing'}.
 ${arrivalLine}
 ${departureLine}
 ${accomLine}
 
 Respond with ONLY a valid JSON array, no markdown fences, no prose. Each object:
-{"id":"slug","name":"Place name","type":"category","description":"max 20 words","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number,"day":1-${dayCount}}
+{"id":"slug","name":"Place name","type":"category","description":"max 20 words","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number}
 
-Use real accurate coordinates. "michelin" only for actual Michelin recognition, "unesco" only for actual World Heritage sites, "tourism" for official board picks, "tripadvisor" for known traveller favorites, "gem" for genuine local spots, "ai" as fallback. Distribute evenly across ${dayCount} days, about ${perDayCount} per day.`;
+Use real, accurate coordinates for each place — this matters more than usual, since we group places into days by their coordinates afterward, not by anything you decide. "michelin" only for actual Michelin recognition, "unesco" only for actual World Heritage sites, "tourism" for official board picks, "tripadvisor" for known traveller favorites, "gem" for genuine local spots, "ai" as fallback. Favor a spatially varied set across ${destination} over clustering everything in one neighborhood, so the whole trip has enough ground to work with once we group it geographically.`;
 
     try {
       const res = await fetch(PROXY_URL, {
@@ -181,10 +476,14 @@ Use real accurate coordinates. "michelin" only for actual Michelin recognition, 
       const data = await res.json();
       const text = data.content?.[0]?.text || '';
       const parsed = parsePlacesJSON(text);
-      console.log('[Juzgo debug] Parsed places:', parsed);
-      window.__lastPlaces = parsed;
       if (parsed.length === 0) throw new Error('No places returned');
-      setRecommendedPlaces(parsed);
+      // Day assignment is computed here, from the coordinates Claude returned —
+      // not trusted from anything Claude said about "day" (see clusterPlacesByDay).
+      const clustered = clusterPlacesByDay(parsed, dayCount);
+      console.log('[Juzgo debug] Parsed places:', parsed);
+      console.log('[Juzgo debug] Clustered by day:', clustered);
+      window.__lastPlaces = clustered;
+      setRecommendedPlaces(clustered);
     } catch (err) {
       setPlacesError('We had trouble researching places for this destination. Please try again.');
     }
@@ -207,14 +506,27 @@ Use real accurate coordinates. "michelin" only for actual Michelin recognition, 
 
   /* ── Stage 3 → 4: build itinerary from chosen places ── */
   async function handleBuildItinerary(chosenPlaces) {
-    setFinalPlaces(chosenPlaces);
-    console.log('[Juzgo debug] Final places sent to map:', chosenPlaces);
-    window.__finalPlaces = chosenPlaces;
+    const dayCount = tripDayCount();
+
+    // Custom (free-text) places from PlacePicker have no day yet — slot each
+    // into the lightest day. Then sequence every day's stops geographically
+    // (nearest-neighbour) and compute real travel times from that sequence,
+    // rather than asking Claude to guess either.
+    const withDays = assignMissingDays(chosenPlaces, dayCount);
+    const orderedPlaces = sequencePlaces(withDays, dayCount);
+    const travelSegments = buildTravelSegments(orderedPlaces);
+
+    setFinalPlaces(orderedPlaces);
+    console.log('[Juzgo debug] Final places sent to map:', orderedPlaces);
+    console.log('[Juzgo debug] Travel segments:', travelSegments);
+    window.__finalPlaces = orderedPlaces;
     setStep(4);
     setItineraryLoading(true);
 
-    const dayCount = tripDayCount();
-    const placesList = chosenPlaces.map((p) => `- ${p.name} (${p.type}, suggested Day ${p.day || '?'})`).join('\n');
+    const placesList = orderedPlaces.map((p) => `- ${p.name} (${p.type}, Day ${p.day})`).join('\n');
+    const segmentLines = travelSegments.length
+      ? travelSegments.map((s) => `Day ${s.day}: "${s.from}" → "${s.to}": ${s.mins} min (${s.mode})`).join('\n')
+      : '(No coordinate-based segments available — use your judgement sparingly and keep timing vague, e.g. "a short trip".)';
     const accomLine = noAccommodation
       ? 'Accommodation is not yet booked — suggest a well-located area to stay and factor in flexible timing for Day 1.'
       : accommodation ? `Staying at: ${accommodation}. Factor travel time to/from this location into the schedule.` : '';
@@ -227,12 +539,15 @@ ${arrivalLine}
 ${departureLine}
 ${accomLine}
 
-Build the itinerary using ONLY these places, organizing them sensibly by day and time of day:
+Build the itinerary using ONLY these places, in this exact order within each day — they've already been sequenced geographically to minimize backtracking, so do not reorder them:
 ${placesList}
 
-Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening structure, and a short "Before You Go" tips section at the top. Keep it well-organized and practical. Do not invent additional must-see places beyond the list above, but you may add brief transport or timing tips between stops.
+Pre-calculated travel times between consecutive same-day stops (these come from real coordinates — use these exact numbers, do not estimate your own):
+${segmentLines}
 
-IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should spend at each location — let them decide that for themselves. Only mention timing when referring to travel time between consecutive stops, phrased as "Travel time to next stop: ~X mins" (by the most sensible mode — walk, MRT, taxi, etc). Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
+Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening structure, and a short "Before You Go" tips section at the top. Keep it well-organized and practical. Do not invent additional must-see places beyond the list above, but you may add brief transport tips between stops.
+
+IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should spend at each location — let them decide that for themselves. Only mention timing when referring to travel time between consecutive stops, phrased as "Travel time to next stop: ~X mins" — using ONLY the pre-calculated numbers given above. If a transition isn't listed above, write "Travel time to next stop: plan for local transit" instead of guessing a number. Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
 
     setMessages([{ role: 'assistant', content: `Building your ${destination} itinerary…` }]);
 
