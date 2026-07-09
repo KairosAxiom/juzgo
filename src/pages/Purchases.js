@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import Footer from '../components/Footer';
+import { generateReceiptPDF } from '../lib/generateReceipt';
 import styles from './Purchases.module.css';
 
 export default function Purchases() {
@@ -78,6 +79,14 @@ export default function Purchases() {
                       View QR code →
                     </a>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => generateReceiptPDF(order)}
+                    className={styles.btnQR}
+                    style={{ background: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    Receipt (PDF) ⬇
+                  </button>
                 </div>
               </div>
             ))}

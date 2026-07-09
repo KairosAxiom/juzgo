@@ -1,6 +1,7 @@
 import React from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import Footer from '../components/Footer';
+import { generateReceiptPDF } from '../lib/generateReceipt';
 import styles from './Pages.module.css';
 
 export default function OrderConfirmation() {
@@ -60,6 +61,16 @@ export default function OrderConfirmation() {
                 <a href={order.qr_url} target="_blank" rel="noreferrer" className={styles.btnPrimary} style={{ display: 'block', textAlign: 'center', marginTop: 18 }}>
                   View QR code →
                 </a>
+              )}
+              {order?.order_code && (
+                <button
+                  type="button"
+                  onClick={() => generateReceiptPDF(order)}
+                  className={styles.btnOutline}
+                  style={{ display: 'block', width: '100%', textAlign: 'center', marginTop: 10 }}
+                >
+                  Download receipt (PDF) ⬇
+                </button>
               )}
             </div>
           )}
