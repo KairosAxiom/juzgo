@@ -354,6 +354,36 @@
 .btnCreate:hover { background: #15734B; }
 .btnCreate:disabled { opacity: .6; cursor: not-allowed; }
 
+.btnApprove {
+  background: #1E8E5E;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnApprove:hover { background: #15734B; }
+.btnApprove:disabled { opacity: .6; cursor: not-allowed; }
+
+.btnSuspend {
+  background: #fff;
+  color: #B91C1C;
+  border: 1px solid #F3D2D2;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnSuspend:hover { background: #FEF2F2; }
+.btnSuspend:disabled { opacity: .6; cursor: not-allowed; }
+
 /* Responsive */
 @media (max-width: 900px) {
   .statsGrid { grid-template-columns: repeat(2, 1fr); }

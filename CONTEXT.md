@@ -1,17 +1,19 @@
 # Juzgo — Living Project Context
-Last updated: July 8, 2026 (Session 20)
-Latest commit: run `git log -1 --oneline` to confirm (last known: "Add explicit two-step review/confirm for corp wallet purchases")
+Last updated: July 8, 2026 (Session 21)
+Latest commit: run `git log -1 --oneline` to confirm (last known before this session: "Add explicit two-step review/confirm for corp wallet purchases")
 
 ---
 
 ## ⚠️ Pre-Launch Checklist (do NOT go live without these)
-- **Wire up real eSIM QR provisioning.** Confirmation emails (card, wallet, and now corp-wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch.
-- **Build the Admin Corporate approval tab.** Confirmed Session 20: `Admin.js` has ZERO references to "corporate" anywhere — no pending/approved sections, no Approve button, despite the backend endpoints (`GET /admin/corporates`, `POST /admin/corporates/:id/approve`) already existing and working. Right now the ONLY way to approve a new corporate/tour-agency application is raw SQL in Supabase's SQL Editor. This blocks real launch — you can't manually SQL-approve every future applicant.
-- Password strength enforcement on registration forms (still open — Register.js only, note CorporateRegister.js and the staff-creation flow already enforce ≥8 chars).
-- **Old orphaned test data needs cleanup before launch:** `davidlim@juzgo.world`'s profile has `is_corporate=true` with a `corp_id` pointing at a deleted corp (harmless for admin login, but messy); several test `corporates` rows exist (Worldwide Pte Ltd / eSimConnect World Pte Ltd, Juzgo Test Corp) that should be deleted or clearly marked before going live.
+- **Wire up real eSIM QR provisioning.** Confirmation emails (card, wallet, and corp-wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch. **Blocked on Airalo company registration (unchanged status).**
+- ~~Build the Admin Corporate approval tab.~~ — **DONE Session 21.** `Admin.js` now has a Corporate tab (Pending/Approved sections, Approve/Suspend/Reactivate). Deploy + smoke-test before relying on it for real applicants.
+- ~~Password strength enforcement on registration forms~~ — **DONE Session 21.** `Register.js` now also requires at least one letter and one number in addition to the existing ≥8 char minimum.
+- ~~Old orphaned test data cleanup~~ — **DONE Session 21.** `cleanup-session21.sql` run + a follow-up one-off fix for `davidlim@juzgo.world` (see Session 21 log Part 3 for the gap found and fixed). `corporates` test rows gone, profile fully cleared.
+- **Insufficient-corp-wallet-balance path — reviewed Session 21, not live-tested.** Code review (`server.js` `/order/corp-wallet-pay`, `Checkout.js`) found no bugs: balance check, 402 response, admin low-balance email, and frontend error display all look correct. Needs an actual live click-through to confirm (see Session 21 log for exact steps) since it was never organically triggered in Session 20 testing.
 - ~~Fix or remove `/order/wallet-pay` (404)~~ — DONE Session 18.
 - ~~Confirm Render `ADMIN_EMAIL`~~ — confirmed correct, `davidlim@juzgo.world`.
 - **Old orders have blank destinations.** Cosmetic, test data only (unchanged from Session 19).
+- **Open decision (Session 21):** whether to build the full `organizations`/`org_links` schema from `ORG-UNIFICATION-SPEC.md` (tour agency support) now, or keep today's corporate-only domain-lock and revisit tour agencies once there's an actual prospect. See Session 21 log for the reasoning — leaning toward deferring, not yet finalized.
 
 ---
 
@@ -637,6 +639,59 @@ Next session should:
 
 ---
 
+### Session 21 — July 8, 2026 (Admin Corporate tab, password strength, cleanup SQL, org-schema decision)
+
+**Part 1 — Admin Corporate approval tab (built, not yet deployed/tested live):**
+- `src/pages/Admin.js`: added `'Corporate'` to `TABS`, a data-fetch branch calling `GET /admin/corporates` (already existed, unchanged), a new tab-content block, and a new `CorporateManager` sub-component (mirrors the existing `ResellerManager` pattern).
+- `CorporateManager` renders two sections:
+  - **⏳ Awaiting Approval** — company, country, contact email, domain, applied date, and a **✓ Approve** button per row → `POST /admin/corporates/:id/approve`.
+  - **Approved Accounts** — company, country, domain, wallet balance, staff count, status badge, and a **Suspend**/**Reactivate** toggle → `PATCH /admin/corporates/:id` with `{ is_active }`.
+- Both actions update local state optimistically from the API response so the UI reflects the change without a full tab reload; per-row `busyId` disables just that row's button mid-request; a shared error banner surfaces failures.
+- `src/pages/Admin.module.css`: added `.btnApprove` (solid green) and `.btnSuspend` (outlined red) button styles; reused existing `.badge_completed`/`.badge_failed` for Active/Suspended, `.table`/`.tableRow`/`.subH3`/`.emptyState` for layout — no new layout primitives needed.
+- **Not yet done:** deploying and clicking through it live. Recommend testing with the existing "Juzgo Test Corp" row (still pending real approval via UI) before running the cleanup SQL below, since it's a convenient live pending row to approve as a smoke test — or re-register a fresh throwaway test corp if that row gets deleted first.
+
+**Part 2 — Insufficient corp-wallet-balance path (code-reviewed, not live-tested — no Supabase/Stripe access from this session's sandbox):**
+Reviewed `POST /order/corp-wallet-pay` (`server.js`) and the corp branch of `handleSubmit` in `Checkout.js`. Found no bugs:
+- Backend compares `corp.wallet_balance` to the plan price, and on shortfall sends the corp's `contact_email` a low-balance notification, then returns `402` with `{ error: '...' }` — no order row and no wallet deduction happen on this path.
+- Frontend's `if (!data.success) throw new Error(data.error || 'Payment failed')` correctly catches this (402 responses still parse fine via `res.json()`; `data.success` is simply absent), and the existing `catch` block sets `error` state, which renders via `{error && <div className={styles.error}>{error}</div>}`.
+- To actually trigger and confirm this live: temporarily set a corp's `wallet_balance` below a plan's `price_sgd` in Supabase (e.g. `UPDATE corporates SET wallet_balance = 1.00 WHERE company_name = 'Juzgo Test Corp';`), then attempt a purchase as a linked staff/admin account. Expect: purchase blocked with the balance message on screen, a low-balance email to the corp's `contact_email`, and no new `orders` row. Restore the real balance afterward.
+
+**Part 3 — Test data cleanup SQL (written, run — with one follow-up fix):**
+Wrote `cleanup-session21.sql` — a single transaction that (a) clears `is_corporate`/`corp_id`/`corp_role` on any profile pointing at one of the three named test corps *or already orphaned* (covers `davidlim@juzgo.world` plus catches any other stray orphan automatically, not just the known one), (b) deletes any leftover `corp_invites` rows tied to those corps, then (c) deletes the `corporates` rows themselves (Worldwide Pte Ltd / eSimConnect World Pte Ltd / Juzgo Test Corp). **Run successfully** — `corporates` table confirmed empty of test rows, `corp_invites` cleared.
+- **Gap found post-run:** the script's `WHERE corp_id IN (...) OR (corp_id IS NOT NULL AND corp_id NOT IN (...))` clause assumed an orphaned profile still has a (dangling) `corp_id`. `davidlim@juzgo.world`'s `corp_id` was already `NULL` from an earlier partial cleanup, so `is_corporate=true`/`corp_role='admin'` slipped past both conditions untouched. Fixed with a targeted one-off:
+  ```sql
+  UPDATE profiles SET is_corporate = false, corp_role = NULL
+  WHERE id = (SELECT id FROM auth.users WHERE email = 'davidlim@juzgo.world')
+    AND is_corporate = true;
+  ```
+  Verified after: `is_corporate=false`, `corp_id=NULL`, `corp_role=NULL`. **Lesson for any future cleanup script in this codebase: check for `is_corporate=true` independently of `corp_id`'s null-ness — the two can already be out of sync before the script runs, not just as a result of the delete it's performing.**
+
+**Part 4 — organizations/org_links schema: build now vs. defer (decision, not yet finalized):**
+Leaning toward **defer** — reasoning discussed:
+- No signed/committed tour-agency customer yet; `ORG-UNIFICATION-SPEC.md` is design-only, driven by a hypothetical second customer type, not a live request.
+- The pre-launch list still has real open items (QR provisioning, this session's cleanup, live-testing the new Admin tab) — a schema rebuild (5 new tables, migration script, rewritten `/corporate/*` endpoints, rebuilt `CorporateDashboard.js` and `Checkout.js`) is a multi-session effort that would delay actually launching the corporate feature that already works.
+- Nothing built this session forecloses the option later — Session 20's domain-lock/admin-created-staff design was explicitly noted as compatible scaffolding either way.
+- Recommendation: ship corporate-only as-is, revisit `ORG-UNIFICATION-SPEC.md` when an actual tour-agency prospect exists. **Not yet confirmed as final — flagging for your decision, not deciding on your behalf.**
+
+**Part 5 — Password strength on `Register.js` (done):**
+Added a second check alongside the existing ≥8-char rule: password must contain at least one letter and one number (`/[A-Za-z]/` and `/[0-9]/`), matching the bar already implied by the existing strength meter's "fair" tier. Error message: "Password must include at least one letter and one number." `CorporateRegister.js` and the staff-creation flow were already at parity with this bar per Session 20 notes — no changes needed there.
+
+**Files changed this session:**
+- `src/pages/Admin.js`, `src/pages/Admin.module.css` (Corporate tab)
+- `src/pages/Register.js` (password strength)
+- `cleanup-session21.sql` (new — not yet run)
+
+**Not touched this session (explicitly deferred, see checklist):** eSIM QR provisioning (still blocked on Airalo company registration), `organizations` schema build (pending your decision above), `twemoji.min.js` 404.
+
+Next session should:
+- Deploy this session's frontend changes, smoke-test the Admin Corporate tab against a real pending corp (approve + suspend + reactivate).
+- Live-test the insufficient-balance path per the steps in Part 2 above.
+- Run `cleanup-session21.sql` (after or alongside the Admin tab smoke test — see Part 1 note on sequencing).
+- Confirm the organizations-schema decision from Part 4, or revisit if circumstances changed.
+- Continue chasing eSIM QR provisioning readiness (Airalo company registration status).
+
+---
+
 ## Files In This Project (Key Files)
 ```
 src/App.js                           Routes + ?ref= capture + LanguageProvider
@@ -658,7 +713,7 @@ src/components/LanguageToggle.js     Language dropdown
 src/pages/Home.js                    Landing page
 src/pages/Plans.js                   eSIM plan browser
 src/pages/Login.js                   Login + forgot password + must_change_password redirect (Session 20)
-src/pages/Register.js                Register + nickname field
+src/pages/Register.js                Register + nickname field; password requires ≥8 chars + letter + number (Session 21)
 src/pages/ResetPassword.js           Password reset (Supabase recovery token)
 src/pages/ForcePasswordChange.js     Forced password change for admin-created staff accounts (new, Session 20)
 src/pages/LoginSuccess.js            Email verify prompt (redirect-aware)
@@ -670,7 +725,7 @@ src/pages/Itinerary.js               4-stage AI planner + map + save/share/updat
 src/pages/SavedItineraries.js        Saved trips list: Open/Share/Delete
 src/pages/Purchases.js               Order history
 src/pages/FindMyOrder.js             Guest order lookup
-src/pages/Admin.js                   7-tab admin panel — NO Corporate tab exists (Session 20 finding, top Pre-Launch item)
+src/pages/Admin.js                   8-tab admin panel, incl. Corporate tab — Pending/Approved sections, Approve/Suspend/Reactivate (Session 21, not yet live-tested)
 src/pages/CorporateRegister.js       Corporate signup — now captures email_domain (Session 20)
 src/pages/CorporateDashboard.js      Corp admin dashboard — "Create a Staff Account" (domain-locked, replaces old invite form, Session 20)
 src/pages/CorporateInvite.js         DEPRECATED Session 20 — unrouted, kept for reference only

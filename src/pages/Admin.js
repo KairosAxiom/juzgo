@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import Footer from '../components/Footer';
 import styles from './Admin.module.css';
 
-const TABS = ['Orders', 'Users', 'Wallet', 'Logs', 'Resellers', 'Sales', 'Analytics'];
+const TABS = ['Orders', 'Users', 'Wallet', 'Logs', 'Resellers', 'Corporate', 'Sales', 'Analytics'];
 
 /* ─────────────────── helpers ─────────────────── */
 function Spinner() { return <div className={styles.spinner} />; }
@@ -67,6 +67,9 @@ export default function Admin() {
       } else if (tabName === 'Resellers') {
         const res = await fetch(`${backend}/admin/resellers`, { headers });
         result = { resellers: await res.json() };
+      } else if (tabName === 'Corporate') {
+        const res = await fetch(`${backend}/admin/corporates`, { headers });
+        result = { corporates: await res.json() };
       } else if (tabName === 'Sales') {
         const [salesRes, refRes] = await Promise.all([
           fetch(`${backend}/admin/sales`, { headers }),
@@ -234,6 +237,14 @@ export default function Admin() {
           <div className={styles.tabContent}>
             <h2 className={styles.tabH2}>Resellers</h2>
             <ResellerManager data={d} />
+          </div>
+        )}
+
+        {/* ── Corporate ── */}
+        {tab === 'Corporate' && (
+          <div className={styles.tabContent}>
+            <h2 className={styles.tabH2}>Corporate Accounts</h2>
+            <CorporateManager data={d} />
           </div>
         )}
 
@@ -449,6 +460,126 @@ function ResellerManager({ data }) {
               <span>{r.commission_pct || 0}%</span>
               <span>{r.total_orders || 0}</span>
               <span><span className={`${styles.badge} ${r.is_active ? styles.badge_completed : styles.badge_failed}`}>{r.is_active ? 'Active' : 'Off'}</span></span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Corporate manager sub-component ── */
+function CorporateManager({ data }) {
+  const [corps, setCorps] = useState(data.corporates || []);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => { setCorps(data.corporates || []); }, [data.corporates]);
+
+  const pending = corps.filter((c) => c.approval_status === 'pending');
+  const approved = corps.filter((c) => c.approval_status === 'approved');
+
+  async function approve(id) {
+    setError('');
+    setBusyId(id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const backend = process.env.REACT_APP_BACKEND_URL;
+      const res = await fetch(`${backend}/admin/corporates/${id}/approve`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Approval failed.');
+      setCorps((prev) => prev.map((c) => (c.id === id ? { ...c, ...result.corp } : c)));
+    } catch (err) {
+      setError(err.message);
+    }
+    setBusyId(null);
+  }
+
+  async function toggleActive(id, nextActive) {
+    setError('');
+    setBusyId(id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const backend = process.env.REACT_APP_BACKEND_URL;
+      const res = await fetch(`${backend}/admin/corporates/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ is_active: nextActive }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Update failed.');
+      setCorps((prev) => prev.map((c) => (c.id === id ? { ...c, is_active: nextActive } : c)));
+    } catch (err) {
+      setError(err.message);
+    }
+    setBusyId(null);
+  }
+
+  return (
+    <div>
+      {error && <div className={styles.lookupErr} style={{ marginBottom: 16 }}>{error}</div>}
+
+      {/* Pending */}
+      <div className={styles.subH3}>⏳ Awaiting Approval{pending.length > 0 ? ` (${pending.length})` : ''}</div>
+      {pending.length === 0 ? (
+        <EmptyState icon="✅" text="No pending corporate applications." />
+      ) : (
+        <div className={styles.table} style={{ marginBottom: 28 }}>
+          <div className={`${styles.tableRow} ${styles.tableHead}`}>
+            <span>Company</span><span>Country</span><span>Contact</span><span>Domain</span><span>Applied</span><span>Action</span>
+          </div>
+          {pending.map((c) => (
+            <div key={c.id} className={styles.tableRow}>
+              <span>{c.company_name}</span>
+              <span>{c.company_country || '—'}</span>
+              <span>{c.contact_email}</span>
+              <span className={styles.mono}>{c.email_domain || '—'}</span>
+              <span className={styles.date}>{new Date(c.created_at).toLocaleDateString('en-SG')}</span>
+              <span>
+                <button className={styles.btnApprove} onClick={() => approve(c.id)} disabled={busyId === c.id}>
+                  {busyId === c.id ? 'Approving…' : '✓ Approve'}
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Approved */}
+      <div className={styles.subH3}>Approved Accounts{approved.length > 0 ? ` (${approved.length})` : ''}</div>
+      {approved.length === 0 ? (
+        <EmptyState icon="🏢" text="No approved corporate accounts yet." />
+      ) : (
+        <div className={styles.table}>
+          <div className={`${styles.tableRow} ${styles.tableHead}`}>
+            <span>Company</span><span>Country</span><span>Domain</span><span>Wallet</span><span>Staff</span><span>Status</span><span>Action</span>
+          </div>
+          {approved.map((c) => (
+            <div key={c.id} className={styles.tableRow}>
+              <span>{c.company_name}</span>
+              <span>{c.company_country || '—'}</span>
+              <span className={styles.mono}>{c.email_domain || '—'}</span>
+              <span>SGD {parseFloat(c.wallet_balance || 0).toFixed(2)}</span>
+              <span>{c.staff_count || 0}</span>
+              <span>
+                <span className={`${styles.badge} ${c.is_active ? styles.badge_completed : styles.badge_failed}`}>
+                  {c.is_active ? 'Active' : 'Suspended'}
+                </span>
+              </span>
+              <span>
+                {c.is_active ? (
+                  <button className={styles.btnSuspend} onClick={() => toggleActive(c.id, false)} disabled={busyId === c.id}>
+                    {busyId === c.id ? '…' : 'Suspend'}
+                  </button>
+                ) : (
+                  <button className={styles.btnCreate} onClick={() => toggleActive(c.id, true)} disabled={busyId === c.id}>
+                    {busyId === c.id ? '…' : 'Reactivate'}
+                  </button>
+                )}
+              </span>
             </div>
           ))}
         </div>
