@@ -211,13 +211,14 @@ export default function CorporateDashboard() {
   // ── CSV export ────────────────────────────────────────────────
   function exportCSV() {
     const rows = [
-      ['Order Code', 'Staff Name', 'Country', 'Plan', 'Amount (SGD)', 'Status', 'Date'],
+      ['Order Code', 'Staff Name', 'Country', 'Plan', 'Amount (SGD)', 'Payment Method', 'Status', 'Date'],
       ...orders.map(o => [
         o.order_code,
         o.customer_name || '—',
         o.country_name || '—',
         o.package_title || '—',
         o.price_sgd,
+        o.payment_method === 'corp_wallet' ? 'Corporate Wallet' : 'Card (self-paid by staff)',
         o.status,
         new Date(o.created_at).toLocaleDateString('en-SG'),
       ]),
@@ -239,6 +240,16 @@ export default function CorporateDashboard() {
   const isPending = corp.approval_status === 'pending';
 
   const completedOrders = orders.filter(o => o.status === 'completed');
+  // Session 21: staff can also self-pay by card when the corp wallet is
+  // short (Checkout.js fallback) — those orders still show up here since
+  // the backend already returns all staff orders regardless of payment
+  // method, but they're the staff member's own money, not the company's,
+  // so they need to be split out for accurate accounting rather than
+  // folded into "Total Spend".
+  const walletOrders = completedOrders.filter(o => o.payment_method === 'corp_wallet');
+  const selfPaidOrders = completedOrders.filter(o => o.payment_method !== 'corp_wallet');
+  const walletSpend = walletOrders.reduce((sum, o) => sum + parseFloat(o.price_sgd || 0), 0);
+  const selfPaidSpend = selfPaidOrders.reduce((sum, o) => sum + parseFloat(o.price_sgd || 0), 0);
 
   return (
     <div className={styles.page}>
@@ -305,8 +316,8 @@ export default function CorporateDashboard() {
               {[
                 { label: 'Corporate Wallet', value: `SGD ${parseFloat(corp.wallet_balance || 0).toFixed(2)}`, accent: true },
                 { label: 'Total Staff', value: staff.length },
-                { label: 'Total Orders', value: completedOrders.length },
-                { label: 'Total Spend', value: `SGD ${totalSpend}` },
+                { label: 'Wallet Spend', value: `SGD ${walletSpend.toFixed(2)}` },
+                { label: 'Staff Self-Paid', value: `SGD ${selfPaidSpend.toFixed(2)}` },
               ].map(({ label, value, accent }) => (
                 <div key={label} className={`${styles.statCard} ${accent ? styles.accentCard : ''}`}>
                   <div className={styles.statValue}>{value}</div>
@@ -314,6 +325,11 @@ export default function CorporateDashboard() {
                 </div>
               ))}
             </div>
+            {selfPaidSpend > 0 && (
+              <div style={{ fontSize: '0.82rem', color: '#78350f', marginTop: -8, marginBottom: 20 }}>
+                💡 SGD {selfPaidSpend.toFixed(2)} was paid personally by staff (corp wallet was short at the time) — see the "Card (self-paid)" tag under Staff Orders for reimbursement.
+              </div>
+            )}
 
             {/* Quick create staff account */}
             <div className={styles.quickInvite}>
@@ -433,6 +449,7 @@ export default function CorporateDashboard() {
                       <th>Staff</th>
                       <th>Plan</th>
                       <th>Amount</th>
+                      <th>Payment</th>
                       <th>Status</th>
                       <th>Date</th>
                     </tr>
@@ -449,6 +466,11 @@ export default function CorporateDashboard() {
                           </div>
                         </td>
                         <td className={styles.amount}>SGD {parseFloat(o.price_sgd).toFixed(2)}</td>
+                        <td>
+                          <span className={`${styles.payBadge} ${o.payment_method === 'corp_wallet' ? styles.payWallet : styles.payCard}`}>
+                            {o.payment_method === 'corp_wallet' ? 'Corp Wallet' : 'Card (self-paid)'}
+                          </span>
+                        </td>
                         <td>
                           <span className={`${styles.statusBadge} ${styles[o.status]}`}>{o.status}</span>
                         </td>
@@ -479,12 +501,12 @@ export default function CorporateDashboard() {
 
             <div className={styles.walletStats}>
               <div className={styles.wStat}>
-                <span className={styles.wStatVal}>SGD {totalSpend}</span>
-                <span className={styles.wStatLabel}>Total Spent</span>
+                <span className={styles.wStatVal}>SGD {walletSpend.toFixed(2)}</span>
+                <span className={styles.wStatLabel}>Total Spent (Wallet)</span>
               </div>
               <div className={styles.wStat}>
-                <span className={styles.wStatVal}>{completedOrders.length}</span>
-                <span className={styles.wStatLabel}>Completed Orders</span>
+                <span className={styles.wStatVal}>{walletOrders.length}</span>
+                <span className={styles.wStatLabel}>Completed Orders (Wallet)</span>
               </div>
             </div>
 

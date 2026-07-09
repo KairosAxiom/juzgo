@@ -332,6 +332,16 @@
 .pending   { background: #fef9c3; color: #854d0e; }
 .failed    { background: #fee2e2; color: #b91c1c; }
 
+.payBadge {
+  display: inline-block;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.payWallet { background: #dbeafe; color: #1d4ed8; }
+.payCard   { background: #fef3c7; color: #92400e; }
+
 .emptyState {
   background: #fff;
   border-radius: 14px;
