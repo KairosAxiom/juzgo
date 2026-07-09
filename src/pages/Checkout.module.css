@@ -294,6 +294,37 @@
   margin-bottom: 12px;
 }
 
+.btnFallback {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1.5px solid #1E8E5E;
+  color: #1E8E5E;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: background .15s;
+}
+.btnFallback:hover { background: #F0F7F3; }
+
+.btnBackLink {
+  display: inline-block;
+  margin-top: 14px;
+  background: none;
+  border: none;
+  color: #6A7A70;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-family: 'Hanken Grotesk', sans-serif;
+}
+.btnBackLink:hover { color: #1E8E5E; }
+
 .btnSubmit {
   width: 100%;
   background: #1E8E5E;

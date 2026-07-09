@@ -26,6 +26,8 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [insufficientBalance, setInsufficientBalance] = useState(false);
+  const [corpFallbackCard, setCorpFallbackCard] = useState(false);
 
   const price = parseFloat(plan?.price_sgd || 0);
   const total = Math.max(0, price - discount).toFixed(2);
@@ -53,10 +55,14 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
     setLoading(true);
     try {
       const backend = process.env.REACT_APP_BACKEND_URL;
-      if (isCorporate) {
-        // Corp-linked accounts (Session 20): work-purchasing only, no card,
-        // no personal wallet — every purchase draws from the org's pooled
-        // wallet automatically.
+      if (isCorporate && !corpFallbackCard) {
+        // Corp-linked accounts (Session 20): default path draws from the
+        // org's pooled wallet automatically. If the balance can't cover it,
+        // offer a one-off self-pay-by-card fallback (Session 21) rather
+        // than leaving the person stuck — this does NOT touch the corp
+        // wallet at all; it's routed through the normal personal card flow
+        // below (see corpFallbackCard branch), so it books as an ordinary
+        // personal card purchase, not a corp transaction.
         const { data: { session } } = await supabase.auth.getSession();
         const res = await fetch(`${backend}/order/corp-wallet-pay`, {
           method: 'POST',
@@ -64,9 +70,12 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
           body: JSON.stringify({ planId: plan.id }),
         });
         const data = await res.json();
-        if (!data.success) throw new Error(data.error || 'Payment failed');
+        if (!data.success) {
+          if (res.status === 402) setInsufficientBalance(true);
+          throw new Error(data.error || 'Payment failed');
+        }
         navigate('/order-confirmation', { state: { order: data.order } });
-      } else if (payMethod === 'wallet') {
+      } else if (!isCorporate && payMethod === 'wallet') {
         const { data: { session } } = await supabase.auth.getSession();
         const res = await fetch(`${backend}/order/wallet-pay`, {
           method: 'POST',
@@ -207,10 +216,12 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
         <div className={styles.card}>
           <h2 className={styles.cardH2}>Payment</h2>
 
-          {isCorporate ? (
-            // Corp-linked accounts: no payment choice at all — every
-            // purchase draws from the org's wallet automatically. No card
-            // form, no personal wallet option.
+          {isCorporate && !corpFallbackCard ? (
+            // Corp-linked accounts: default view — no payment choice, every
+            // purchase draws from the org's wallet automatically. If the
+            // balance looks short (client-side check) or an attempt just
+            // came back insufficient (402), offer a self-pay-by-card
+            // fallback instead of leaving the person stuck (Session 21).
             <div className={styles.walletInfo}>
               Paying from your <strong>corporate wallet</strong>. <strong>SGD {total}</strong> will
               be deducted from your company's balance
@@ -222,7 +233,38 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
                   Your company's wallet balance may not cover this — contact your admin if the purchase fails.
                 </div>
               )}
+              {(insufficientBalance || (corpWallet != null && parseFloat(corpWallet) < parseFloat(total))) && (
+                <button
+                  type="button"
+                  className={styles.btnFallback}
+                  onClick={() => { setError(''); setInsufficientBalance(false); setCorpFallbackCard(true); }}
+                >
+                  Would you like to pay by Credit Card? · SGD {total} →
+                </button>
+              )}
             </div>
+          ) : isCorporate && corpFallbackCard ? (
+            // Corp-linked account, self-paying by personal card. This is a
+            // plain personal card purchase — the corp wallet isn't touched
+            // at all, and it doesn't show up in the org's spend.
+            <>
+              <div className={styles.walletInfo} style={{ marginBottom: 16 }}>
+                Paying <strong>yourself</strong> by card — this won't touch {corpWallet != null ? "your company's" : 'the corporate'} wallet.
+              </div>
+              <div className={styles.cardFields} style={{ marginTop: 0 }}>
+                <label className={styles.label}>Name on card</label>
+                <input type="text" placeholder="John Smith" value={name} onChange={(e) => setName(e.target.value)} className={styles.input} required />
+                <label className={styles.label}>Email</label>
+                <input type="email" placeholder="your@email.com" value={email} onChange={(e) => setEmail(e.target.value)} className={styles.input} required />
+                <label className={styles.label}>Card details</label>
+                <div className={styles.cardElement}>
+                  <CardElement options={{ hidePostalCode: true, style: { base: { fontFamily: 'Hanken Grotesk, sans-serif', fontSize: '15px', color: '#16271E', '::placeholder': { color: '#9AA89F' } } } }} />
+                </div>
+              </div>
+              <button type="button" className={styles.btnBackLink} onClick={() => { setError(''); setCorpFallbackCard(false); }}>
+                ← Back to company wallet
+              </button>
+            </>
           ) : (
             <>
               {/* Card option */}
@@ -280,8 +322,8 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
 
           {error && <div className={styles.error}>{error}</div>}
 
-          <button type="submit" className={styles.btnSubmit} disabled={loading || (!isCorporate && !stripe)}>
-            {loading ? 'Processing…' : isCorporate ? `Confirm purchase · SGD ${total} →` : `Get my eSIM · SGD ${total} →`}
+          <button type="submit" className={styles.btnSubmit} disabled={loading || ((!isCorporate || corpFallbackCard) && !stripe)}>
+            {loading ? 'Processing…' : isCorporate && !corpFallbackCard ? `Confirm purchase · SGD ${total} →` : `Get my eSIM · SGD ${total} →`}
           </button>
         </div>
       </div>
