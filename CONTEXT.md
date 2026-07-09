@@ -1,19 +1,21 @@
 # Juzgo — Living Project Context
-Last updated: July 8, 2026 (Session 21)
-Latest commit: 7fd5ca28 — "Add Admin Corporate approval tab, password strength on Register.js, Session 21 cleanup SQL" (confirmed live in Cloudflare Pages Production)
+Last updated: July 9, 2026 (Session 21)
+Latest commit: 18e5ef4f — "Pin typescript to 4.9.5 (react-scripts peer range) to fix npm ci lockfile drift" (confirmed live in Cloudflare Pages Production, build succeeded)
 
 ---
 
 ## ⚠️ Pre-Launch Checklist (do NOT go live without these)
-- **Wire up real eSIM QR provisioning.** Confirmation emails (card, wallet, and corp-wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch. **Blocked on Airalo company registration (unchanged status).**
-- ~~Build the Admin Corporate approval tab.~~ — **DONE + live-tested Session 21** (registration → pending → Approve, confirmed working). `Admin.js` now has a Corporate tab (Pending/Approved sections, Approve/Suspend/Reactivate). **Suspend/Reactivate not yet exercised live** — do that next.
+- **Wire up real eSIM QR provisioning.** Confirmation emails (card, wallet, and corp-wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch. **Blocked on Airalo company registration (unchanged status) — the one real remaining pre-launch blocker.**
+- ~~Build the Admin Corporate approval tab.~~ — **DONE + fully live-tested Session 21**, including Suspend/Reactivate (David tested directly). Registration → pending → Approve → Suspend → Reactivate, all confirmed working end to end.
 - ~~Password strength enforcement on registration forms~~ — **DONE Session 21.** `Register.js` now also requires at least one letter and one number in addition to the existing ≥8 char minimum.
-- ~~Old orphaned test data cleanup~~ — **DONE Session 21.** `cleanup-session21.sql` run + a follow-up one-off fix for `davidlim@juzgo.world` (see Session 21 log Part 3 for the gap found and fixed). `corporates` test rows gone, profile fully cleared.
-- **Insufficient-corp-wallet-balance path — reviewed Session 21, not live-tested.** Code review (`server.js` `/order/corp-wallet-pay`, `Checkout.js`) found no bugs: balance check, 402 response, admin low-balance email, and frontend error display all look correct. Needs an actual live click-through to confirm (see Session 21 log for exact steps) since it was never organically triggered in Session 20 testing.
+- ~~Old orphaned test data cleanup~~ — **DONE Session 21.** `cleanup-session21.sql` run + a follow-up one-off fix for `davidlim@juzgo.world` (see Session 21 log Part 3). `corporates` test rows gone, profile fully cleared.
+- ~~Insufficient-corp-wallet-balance path~~ — **DONE + live-tested Session 21.** Reviewed clean, then extended per David's request with a self-pay-by-card fallback (Part 7) — live-tested working end to end on `corptest@juzgo.world`.
+- ~~Corp Portal wallet vs. self-paid spend accounting~~ — **DONE Session 21** (Part 8). Staff self-pay-by-card orders were already visible in the Corp Portal (backend returns all staff orders regardless of payment method) but were silently inflating "Total Spend." Now split into Wallet Spend / Staff Self-Paid with a Payment column badge, live-tested.
+- ~~Downloadable purchase receipts~~ — **DONE Session 21** (Part 9). PDF receipts on OrderConfirmation + Purchases, live-tested. Uncovered and fixed a real `npm ci` / TypeScript peer-dependency lockfile bug along the way (see Part 9 — worth reading if any future `npm install` work hits build failures).
 - ~~Fix or remove `/order/wallet-pay` (404)~~ — DONE Session 18.
 - ~~Confirm Render `ADMIN_EMAIL`~~ — confirmed correct, `davidlim@juzgo.world`.
 - **Old orders have blank destinations.** Cosmetic, test data only (unchanged from Session 19).
-- **Open decision (Session 21):** whether to build the full `organizations`/`org_links` schema from `ORG-UNIFICATION-SPEC.md` (tour agency support) now, or keep today's corporate-only domain-lock and revisit tour agencies once there's an actual prospect. See Session 21 log for the reasoning — leaning toward deferring, not yet finalized.
+- **Open decision (Session 21, still unresolved):** whether to build the full `organizations`/`org_links` schema from `ORG-UNIFICATION-SPEC.md` (tour agency support) now, or keep the current corporate-only domain-lock and revisit tour agencies once there's an actual prospect. See Session 21 log Part 4 for the reasoning — leaning toward deferring, not yet finalized. This is the only open item besides QR provisioning.
 
 ---
 
@@ -21,8 +23,9 @@ Latest commit: 7fd5ca28 — "Add Admin Corporate approval tab, password strength
 - Repo: https://github.com/KairosAxiom/juzgo
 - Live: https://juzgo.world
 - Local: D:\Kairos\juzgo (USB Drive D:)
-- Cloudflare Pages project name: esimconnect (internal — cannot rename)
+- Cloudflare Pages project name: esimconnect (internal — cannot rename; confirmed Session 21, Cloudflare Pages project names are permanent post-creation, this is a platform limitation not specific to this project)
 - Branch: main
+- **Build environment note (Session 21):** Cloudflare's build image runs npm 10.9.2 / node 22.16.0. If regenerating `package-lock.json` locally, match this exactly first (`npm install -g npm@10.9.2`) or `npm ci` can pass locally and still fail the actual Cloudflare deploy — this happened this session, see Session 21 Part 9.
 
 ## Supabase
 - Project: esimconnect (emsovpcmdnuxrhbyvnvb.supabase.co)
@@ -639,7 +642,7 @@ Next session should:
 
 ---
 
-### Session 21 — July 8, 2026 (Admin Corporate tab, password strength, cleanup SQL, org-schema decision)
+### Session 21 — July 8–9, 2026 (Admin Corporate tab, password strength, cleanup SQL, org-schema decision, self-pay-by-card fallback, PDF receipts, npm ci lockfile fix)
 
 **Part 1 — Admin Corporate approval tab (built + deployed + partially live-tested):**
 - `src/pages/Admin.js`: added `'Corporate'` to `TABS`, a data-fetch branch calling `GET /admin/corporates` (already existed, unchanged), a new tab-content block, and a new `CorporateManager` sub-component (mirrors the existing `ResellerManager` pattern).
@@ -677,20 +680,55 @@ Leaning toward **defer** — reasoning discussed:
 **Part 5 — Password strength on `Register.js` (done):**
 Added a second check alongside the existing ≥8-char rule: password must contain at least one letter and one number (`/[A-Za-z]/` and `/[0-9]/`), matching the bar already implied by the existing strength meter's "fair" tier. Error message: "Password must include at least one letter and one number." `CorporateRegister.js` and the staff-creation flow were already at parity with this bar per Session 20 notes — no changes needed there.
 
-**Files changed this session:**
+**Part 6 — Suspend/Reactivate live-tested (closes out the Part 1 gap):**
+Tested directly by David on the live Admin Corporate tab against `corptest@juzgo.world`: Suspend flipped the row to "Suspended" correctly, Reactivate flipped it back to "Active." No issues. The Admin Corporate approval tab (Part 1) is now **fully live-tested end to end** — registration → pending → approve → suspend → reactivate, all confirmed working.
+
+**Part 7 — Self-pay-by-card fallback on insufficient corp wallet balance (new feature, David's request, built + live-tested):**
+While live-testing the insufficient-balance path from Part 2, David asked for a way to let a corp-linked user pay for the purchase themselves by card rather than just being blocked. **This reopens the Session 20 "work-purchasing only — no card, ever" design decision**, deliberately — flagged to David at the time, he confirmed he wants it anyway.
+- `src/pages/Checkout.js`: added `insufficientBalance` and `corpFallbackCard` state. On a `402` from `/order/corp-wallet-pay` (or proactively, if the known corp balance is already below the plan price), a button appears: **"Would you like to pay by Credit Card? · SGD X →"** (copy specifically requested by David). Clicking it swaps the panel to a normal name/email/card (`CardElement`) form, with a "← Back to company wallet" link to return.
+- This routes through the **existing personal-card checkout path** (same `create-payment-intent` → `confirmCardPayment` → `order/create` flow non-corp users use) — books as an ordinary `payment_method: 'card'` order tied to the person, **not** the corp wallet.
+- `src/pages/Checkout.module.css`: added `.btnFallback` and `.btnBackLink`.
+- **Live-tested:** `corptest@juzgo.world` (wallet at SGD 6.00) attempted a SGD 16.00 purchase, got blocked, clicked through the fallback, completed a real card charge, landed on order confirmation normally. Worked cleanly.
+
+**Part 8 — Corp Portal: split wallet spend from staff self-paid spend (accounting fix, prompted by Part 7):**
+Once self-pay-by-card was live, David asked for those purchases to be visible in the Corp Portal for reimbursement/accounting purposes. Turned out they already were — `/corporate/dashboard` (backend) already returns every order placed by corp staff regardless of `payment_method`, so self-paid orders were **already landing in the Staff Orders table**. The real gap: nothing distinguished them from actual wallet spend, and the old "Total Spend" stat was **silently summing both together**, overstating what the company itself had actually paid. No backend changes needed — purely a `CorporateDashboard.js`/`.module.css` display/aggregation fix:
+- Staff Orders table: new **Payment** column, blue "Corp Wallet" badge vs. amber "Card (self-paid)" badge.
+- Overview stats: split into **Wallet Spend** and **Staff Self-Paid**, plus a callout line pointing admins to the badge when there's outstanding self-paid spend.
+- Wallet tab's "Total Spent"/"Completed Orders" sidebar stats: now wallet-only too (same conflation existed there, fixed for consistency — this section is specifically about the corp wallet balance).
+- CSV export: added a "Payment Method" column.
+- **Live-tested:** confirmed in the Corp Portal as `corptest@juzgo.world` (admin) — the Part 7 self-paid order shows the amber badge and counts toward "Staff Self-Paid," not "Wallet Spend."
+
+**Part 9 — Downloadable PDF receipts (David's request, built + live-tested) + a real `npm ci` lockfile bug found and fixed along the way:**
+David asked whether staff could print/save a receipt for expense claims. Nothing like this existed anywhere in the codebase before this. Built:
+- `src/lib/generateReceipt.js` (new) — shared `generateReceiptPDF(order)` using `jspdf` (added to `package.json`). Renders order code, date, billed-to name/email, item + destination + data/validity, subtotal/discount/total, payment method, status, and a reimbursement-oriented footer note. Deliberately does **not** show a GST/tax breakdown — the `orders` table doesn't actually store one anywhere in the code despite an earlier CONTEXT.md mention of "GST 9% applied at checkout," so a fabricated tax line would've been inaccurate on a document meant for expense claims.
+- `src/pages/OrderConfirmation.js` — "Download receipt (PDF)" button right after purchase (only when a real order row exists).
+- `src/pages/Purchases.js` — a "Receipt (PDF)" button on every past order.
+- **Deploy hit a real, unrelated build failure along the way** — worth documenting in detail since it's a systemic risk, not a one-off:
+  1. First push (`6a1333ce`) failed Cloudflare's build: `npm ci` errored `Missing: yaml@2.9.0 from lock file`. Traced this to David's local machine running **npm 11.9.0 / node 24.14.0**, ahead of Cloudflare's build image (**npm 10.9.2 / node 22.16.0**) — npm 11 writes/resolves lockfiles in a way npm 10's stricter `ci` validation doesn't accept, even though the content itself wasn't "wrong." A plain local `npm install` regenerating the lockfile didn't fix it (produced a byte-identical file, since it was already using npm 11 both times).
+  2. **Fix:** downgraded local npm to match Cloudflare exactly — `npm install -g npm@10.9.2` — then regenerated `node_modules`/`package-lock.json` from scratch under that version. This surfaced a **second, genuinely real bug**, unrelated to receipts entirely: `typescript` isn't a direct dependency anywhere in this project (plain JS/JSX throughout, confirmed via `grep`), it's only an *optional peer* of `react-scripts@5.0.1` (wants `^3.2.1 || ^4`). With nothing pinning it, npm had silently resolved the latest published TypeScript at some past install — which has since moved to a `7.x` major, outside what `react-scripts` supports, and `npm ci` (correctly) refused to proceed once that drift got flagged under npm 10's stricter checks.
+  3. **Final fix, now committed:** `npm install typescript@4.9.5 --save-dev` — pins TypeScript explicitly as a devDependency so it stops silently drifting on future installs. `npm ci` now passes clean locally under npm 10.9.2, matching Cloudflare exactly. Pushed as `18e5ef4f`; Cloudflare build succeeded.
+- **Live-tested:** receipt buttons render correctly on both `OrderConfirmation.js` and `Purchases.js` (confirmed on `staff1`'s account, screenshot showed correct PDF — Juzgo branding, order details, "Suitable for expense claims" footer).
+- **Lesson for next session, and any future `npm install`/lockfile work in this codebase: always match the local npm version to Cloudflare's build image (currently npm 10.9.2 / node 22.16.0) before regenerating `package-lock.json`, or the lockfile can pass locally and still fail the actual deploy.** Worth periodically checking Cloudflare's current default Node/npm version in case it's moved since.
+
+**Files changed this session (full session, Parts 1–9):**
 - `src/pages/Admin.js`, `src/pages/Admin.module.css` (Corporate tab)
 - `src/pages/Register.js` (password strength)
-- `cleanup-session21.sql` (new — run, plus a targeted follow-up fix for `davidlim@juzgo.world`, see Part 3)
+- `cleanup-session21.sql` (run, plus a targeted follow-up fix for `davidlim@juzgo.world`, see Part 3)
+- `src/pages/Checkout.js`, `src/pages/Checkout.module.css` (self-pay-by-card fallback)
+- `src/pages/CorporateDashboard.js`, `src/pages/CorporateDashboard.module.css` (wallet vs. self-paid spend split)
+- `src/lib/generateReceipt.js` (new), `src/pages/OrderConfirmation.js`, `src/pages/Purchases.js` (PDF receipts)
+- `package.json`, `package-lock.json` (jspdf added; typescript pinned to 4.9.5; lockfile regenerated under npm 10.9.2 to match Cloudflare)
 
-**Not touched this session (explicitly deferred, see checklist):** eSIM QR provisioning (still blocked on Airalo company registration), `organizations` schema build (pending your decision above), `twemoji.min.js` 404.
+**Not touched this session (explicitly deferred, see checklist):** eSIM QR provisioning (still blocked on Airalo company registration), `organizations` schema build (pending David's decision, see Part 4 — still open).
 
 Next session should:
-- Smoke-test the **Suspend/Reactivate** toggle on the Admin Corporate tab — Approve was live-tested this session (`corptest@juzgo.world` registration → pending → approved, worked cleanly), Suspend/Reactivate was not.
-- Live-test the insufficient-balance path per the steps in Part 2 above.
-- Confirm the organizations-schema decision from Part 4, or revisit if circumstances changed.
-- Continue chasing eSIM QR provisioning readiness (Airalo company registration status).
+- Confirm the organizations-schema decision from Part 4, or revisit if circumstances changed — the one open decision still carrying over.
+- Continue chasing eSIM QR provisioning readiness (Airalo company registration status) — the one real remaining pre-launch blocker.
+- Spot-check the self-pay-by-card fallback (Part 7) doesn't get accidentally over-used — it's meant as a last-resort, not a preferred path; worth watching whether "Staff Self-Paid" in the Corp Portal grows unexpectedly large over time, which would suggest the corp wallet isn't being topped up often enough rather than the fallback being misused.
+- If any further `npm install`/`package-lock.json` work comes up, start from `npm install -g npm@10.9.2` first (see Part 9 lesson) rather than rediscovering the version-mismatch issue again.
 
 ---
+
 
 ## Files In This Project (Key Files)
 ```
@@ -718,16 +756,17 @@ src/pages/ResetPassword.js           Password reset (Supabase recovery token)
 src/pages/ForcePasswordChange.js     Forced password change for admin-created staff accounts (new, Session 20)
 src/pages/LoginSuccess.js            Email verify prompt (redirect-aware)
 src/pages/Dashboard.js               Overview/Referral/Reseller tabs — shows corp wallet for corp-linked accounts (Session 20)
-src/pages/Checkout.js                Card + wallet + promo codes; corp-linked accounts get corp-wallet-only checkout with two-step confirm (Session 20)
-src/pages/OrderConfirmation.js       Post-purchase
+src/pages/Checkout.js                Card + wallet + promo codes; corp-linked accounts get corp-wallet checkout with two-step confirm, plus a self-pay-by-card fallback on insufficient balance (Session 20 + 21)
+src/pages/OrderConfirmation.js       Post-purchase; "Download receipt (PDF)" button (Session 21)
 src/pages/Wallet.js                  eWallet top-up; blocked entirely for corp-linked accounts (Session 20)
 src/pages/Itinerary.js               4-stage AI planner + map + save/share/update
 src/pages/SavedItineraries.js        Saved trips list: Open/Share/Delete
-src/pages/Purchases.js               Order history
+src/pages/Purchases.js               Order history; "Receipt (PDF)" button per order (Session 21)
 src/pages/FindMyOrder.js             Guest order lookup
-src/pages/Admin.js                   8-tab admin panel, incl. Corporate tab — Approve live-tested Session 21; Suspend/Reactivate not yet tested
+src/pages/Admin.js                   8-tab admin panel, incl. Corporate tab — fully live-tested Session 21 (Approve/Suspend/Reactivate all confirmed working)
 src/pages/CorporateRegister.js       Corporate signup — now captures email_domain (Session 20)
-src/pages/CorporateDashboard.js      Corp admin dashboard — "Create a Staff Account" (domain-locked, replaces old invite form, Session 20)
+src/pages/CorporateDashboard.js      Corp admin dashboard — "Create a Staff Account" (Session 20); Staff Orders split into Wallet Spend vs. Staff Self-Paid (Session 21)
+src/lib/generateReceipt.js           NEW Session 21 — shared jsPDF receipt generator, used by OrderConfirmation.js + Purchases.js
 src/pages/CorporateInvite.js         DEPRECATED Session 20 — unrouted, kept for reference only
 src/pages/CorporateAccept.js         DEPRECATED — was routed but broken; removed from routing Session 20
 src/pages/TermsAndConditions.js      T&C
