@@ -168,13 +168,68 @@ function orderClustersByCentroidPath(centroids) {
 }
 
 /*
+ * Nominatim (OpenStreetMap's free geocoder, no key required) is used to
+ * fetch a real administrative bounding box for the trip's destination.
+ * This gives ground truth to catch coordinate hallucinations against.
+ * A pure distance/statistics approach was tried first and rejected: "far
+ * from downtown" isn't inherently wrong (e.g. Changi vs. central
+ * Singapore) but "outside the country" is a different kind of wrong, and
+ * in a small, compact destination those two can land at nearly the same
+ * distance — geometry alone can't reliably tell them apart. A real border
+ * can.
+ */
+async function fetchDestinationBounds(destination) {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(destination)}&format=json&limit=1`
+    );
+    const data = await res.json();
+    const hit = Array.isArray(data) ? data[0] : null;
+    if (!hit || !hit.boundingbox) return null;
+    const [south, north, west, east] = hit.boundingbox.map(Number);
+    if ([south, north, west, east].some((n) => isNaN(n))) return null;
+    return { south, north, west, east };
+  } catch {
+    return null; // fail open — if geocoding is unreachable, skip the check rather than blocking the whole flow
+  }
+}
+
+/*
+ * Strips coordinates from any place whose lat/lng falls outside the
+ * destination's real bounding box (plus a small buffer for edge rounding).
+ * Places that lose their coordinates this way fall into the existing
+ * "no usable coordinate" handling everywhere downstream (round-robin day
+ * assignment, skipped on the map, skipped in travel-time segments) instead
+ * of getting force-fit into a cluster and dragging it across a border.
+ * No-op if bounds couldn't be fetched — fails open rather than blocking.
+ */
+function stripOutOfBoundsCoords(places, bounds) {
+  if (!bounds) return places;
+  const buffer = 0.05; // ~5km — generous for edge rounding, tight enough to still catch cross-border hallucinations
+  return places.map((p) => {
+    if (!isValidCoord(p.lat) || !isValidCoord(p.lng)) return p;
+    const lat = toNum(p.lat), lng = toNum(p.lng);
+    const inBounds =
+      lat >= bounds.south - buffer && lat <= bounds.north + buffer &&
+      lng >= bounds.west - buffer && lng <= bounds.east + buffer;
+    if (inBounds) return { ...p, lat, lng };
+    console.warn(
+      `[Juzgo debug] Rejected "${p.name}" — coordinates (${lat}, ${lng}) fall outside the destination's real geographic bounds. Likely bad coordinates from Claude.`
+    );
+    return { ...p, lat: null, lng: null };
+  });
+}
+
+/*
  * Replaces Claude's own "day" guess with a computed one. Runs balanced
  * k-means on valid coordinates — actual pairwise proximity, not a 1D
  * approximation — so each day is the set of places genuinely closest to
  * each other, sized evenly, then orders the resulting days into a sensible
  * day-1-to-day-N geographic sequence. Places without usable coordinates
- * (rare — should only be custom user-added places later, not Stage 3
- * output) fall back to round-robin.
+ * (custom user-added places, or anything stripped by
+ * stripOutOfBoundsCoords for having bad coordinates) fall back to
+ * round-robin — better to place them arbitrarily than let one bad point
+ * corrupt an entire day's cluster.
  */
 function clusterPlacesByDay(places, dayCount) {
   const safeDayCount = Math.max(1, dayCount);
@@ -477,10 +532,17 @@ Use real, accurate coordinates for each place — this matters more than usual, 
       const text = data.content?.[0]?.text || '';
       const parsed = parsePlacesJSON(text);
       if (parsed.length === 0) throw new Error('No places returned');
+      // Catch coordinate hallucinations against the destination's real
+      // borders before they can drag a cluster across a country (see
+      // fetchDestinationBounds / stripOutOfBoundsCoords). Runs in parallel
+      // with nothing else, so it's the one await here.
+      const bounds = await fetchDestinationBounds(destination);
+      const sanitized = stripOutOfBoundsCoords(parsed, bounds);
       // Day assignment is computed here, from the coordinates Claude returned —
       // not trusted from anything Claude said about "day" (see clusterPlacesByDay).
-      const clustered = clusterPlacesByDay(parsed, dayCount);
+      const clustered = clusterPlacesByDay(sanitized, dayCount);
       console.log('[Juzgo debug] Parsed places:', parsed);
+      console.log('[Juzgo debug] Destination bounds:', bounds);
       console.log('[Juzgo debug] Clustered by day:', clustered);
       window.__lastPlaces = clustered;
       setRecommendedPlaces(clustered);
