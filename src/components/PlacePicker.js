@@ -11,7 +11,15 @@ const TRUST_BADGES = {
 };
 
 export default function PlacePicker({ destination, places, onConfirm, onBack, loading }) {
-  const [selected, setSelected] = useState(() => new Set(places.map((p) => p.id)));
+  // Core places (what the traveller actually asked for) are pre-selected.
+  // Optional places (Stage 3's overproduced "bonus" suggestions) are shown
+  // but start unchecked — the traveller opts into extras rather than having
+  // to notice and untick things they never asked for. Anything without a
+  // tier field (older data, or a fallback add) is treated as core.
+  const corePlaces = places.filter((p) => p.tier !== 'optional');
+  const optionalPlaces = places.filter((p) => p.tier === 'optional');
+
+  const [selected, setSelected] = useState(() => new Set(corePlaces.map((p) => p.id)));
   const [customPlace, setCustomPlace] = useState('');
   const [customPlaces, setCustomPlaces] = useState([]);
 
@@ -59,6 +67,51 @@ export default function PlacePicker({ destination, places, onConfirm, onBack, lo
   const allItems = [...places, ...customPlaces];
   const allChecked = allItems.length > 0 && selected.size === allItems.length;
 
+  // Small inline badges for fields PlacePicker.module.css doesn't have
+  // classes for yet — kept visually consistent with trustBadge sizing.
+  const inlineBadgeStyle = {
+    display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600,
+    padding: '3px 8px', borderRadius: 999, marginLeft: 6,
+  };
+
+  function renderPlaceCard(place) {
+    const badge = place.trust ? TRUST_BADGES[place.trust] : TRUST_BADGES.ai;
+    const checked = selected.has(place.id);
+    const isUserSpecified = place.source === 'user_specified';
+    return (
+      <div
+        key={place.id}
+        className={`${styles.card} ${checked ? styles.cardChecked : ''}`}
+        onClick={() => toggle(place.id)}
+      >
+        <div className={`${styles.checkboxBig} ${checked ? styles.checkboxBigActive : ''}`}>
+          {checked ? '✓' : ''}
+        </div>
+        <div className={styles.cardBody}>
+          <div className={styles.cardTop}>
+            <span className={styles.cardType}>{place.type}</span>
+            {place.day && <span className={styles.dayTag}>Day {place.day}</span>}
+          </div>
+          <div className={styles.cardName}>{place.name}</div>
+          <p className={styles.cardDesc}>{place.description}</p>
+          <span className={`${styles.trustBadge} ${styles[badge.cls]}`}>
+            {badge.icon} {badge.label}
+          </span>
+          {isUserSpecified && (
+            <span style={{ ...inlineBadgeStyle, background: '#EAF2FF', color: '#2A6FDB' }}>
+              📌 Your request
+            </span>
+          )}
+          {place.dateUncertain && (
+            <span style={{ ...inlineBadgeStyle, background: '#FFF3E0', color: '#B26A00' }}>
+              📅 Dates TBC
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.wrap}>
       <button className={styles.btnBack} onClick={onBack}>← Back</button>
@@ -66,7 +119,7 @@ export default function PlacePicker({ destination, places, onConfirm, onBack, lo
       <div className={styles.eyebrow} style={{ marginTop: 20 }}>Recommended for {destination}</div>
       <h1 className={styles.h1}>Pick what you'd like to see</h1>
       <p className={styles.sub}>
-        We've researched {places.length} places worth your time. Untick anything that doesn't interest you, or add your own.
+        We've researched {corePlaces.length} places to match your pace{optionalPlaces.length > 0 ? `, plus ${optionalPlaces.length} extra suggestions below if you'd like a fuller trip` : ''}. Untick anything that doesn't interest you, or add your own.
       </p>
 
       <div className={styles.toolbar}>
@@ -83,32 +136,7 @@ export default function PlacePicker({ destination, places, onConfirm, onBack, lo
       </div>
 
       <div className={styles.grid}>
-        {places.map((place) => {
-          const badge = place.trust ? TRUST_BADGES[place.trust] : TRUST_BADGES.ai;
-          const checked = selected.has(place.id);
-          return (
-            <div
-              key={place.id}
-              className={`${styles.card} ${checked ? styles.cardChecked : ''}`}
-              onClick={() => toggle(place.id)}
-            >
-              <div className={`${styles.checkboxBig} ${checked ? styles.checkboxBigActive : ''}`}>
-                {checked ? '✓' : ''}
-              </div>
-              <div className={styles.cardBody}>
-                <div className={styles.cardTop}>
-                  <span className={styles.cardType}>{place.type}</span>
-                  {place.day && <span className={styles.dayTag}>Day {place.day}</span>}
-                </div>
-                <div className={styles.cardName}>{place.name}</div>
-                <p className={styles.cardDesc}>{place.description}</p>
-                <span className={`${styles.trustBadge} ${styles[badge.cls]}`}>
-                  {badge.icon} {badge.label}
-                </span>
-              </div>
-            </div>
-          );
-        })}
+        {corePlaces.map(renderPlaceCard)}
 
         {customPlaces.map((place) => {
           const checked = selected.has(place.id);
@@ -140,6 +168,20 @@ export default function PlacePicker({ destination, places, onConfirm, onBack, lo
           );
         })}
       </div>
+
+      {optionalPlaces.length > 0 && (
+        <>
+          <div style={{ marginTop: 32, marginBottom: 8 }}>
+            <div className={styles.eyebrow}>Want a fuller trip?</div>
+            <p className={styles.sub} style={{ marginTop: 4 }}>
+              {optionalPlaces.length} more places we found — add any that catch your eye.
+            </p>
+          </div>
+          <div className={styles.grid}>
+            {optionalPlaces.map(renderPlaceCard)}
+          </div>
+        </>
+      )}
 
       {/* Add your own place */}
       <div className={styles.addCard}>
