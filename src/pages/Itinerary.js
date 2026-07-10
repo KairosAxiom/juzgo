@@ -220,6 +220,69 @@ function stripOutOfBoundsCoords(places, bounds) {
   });
 }
 
+/* Removes any Stage-3 output whose subject is a transit network or mode of
+   transport itself rather than a real destination (e.g. "MRT Network",
+   "City Bus System"). The prompt already asks Claude not to generate
+   these, but categories are self-reported by the model, so this is a
+   cheap code-level backstop. */
+function stripTransitNetworkPlaces(places) {
+  return places.filter((p) => p.type !== 'transport');
+}
+
+/* Looks up a single named place via Nominatim — used only as a fallback
+   when a traveller's explicitly-requested place doesn't come back in
+   Claude's Stage 3 JSON, so it can still be force-added with real
+   coordinates rather than silently dropped. */
+async function geocodePlace(placeName, destination) {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(`${placeName}, ${destination}`)}&format=json&limit=1`
+    );
+    const data = await res.json();
+    const hit = Array.isArray(data) ? data[0] : null;
+    if (!hit) return null;
+    const lat = parseFloat(hit.lat), lng = parseFloat(hit.lon);
+    if (isNaN(lat) || isNaN(lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+/*
+ * Guarantees every place the traveller explicitly typed in Stage 1 ends up
+ * in the final list, even if Claude's Stage 3 output dropped it. Does a
+ * loose name-match first (Claude may have returned it with slightly
+ * different phrasing); only geocodes and force-adds if genuinely missing.
+ * Runs sequentially (not Promise.all) since it's a handful of places at
+ * most and keeps Nominatim usage one-request-at-a-time.
+ */
+async function ensureMustSeePlaces(places, mustSeeList, destination) {
+  if (!mustSeeList || mustSeeList.length === 0) return places;
+  const result = [...places];
+  for (const rawName of mustSeeList) {
+    const name = rawName.trim();
+    if (!name) continue;
+    const alreadyPresent = result.some(
+      (p) => p.name && (p.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(p.name.toLowerCase()))
+    );
+    if (alreadyPresent) continue;
+    const coords = await geocodePlace(name, destination);
+    result.push({
+      id: `must-see-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      name,
+      type: 'places',
+      description: 'Added because you specifically asked for it.',
+      trust: 'ai',
+      lat: coords?.lat ?? null,
+      lng: coords?.lng ?? null,
+      source: 'user_specified',
+      tier: 'core',
+    });
+  }
+  return result;
+}
+
 /*
  * Replaces Claude's own "day" guess with a computed one. Runs balanced
  * k-means on valid coordinates — actual pairwise proximity, not a 1D
@@ -351,15 +414,73 @@ function assignMissingDays(places, dayCount) {
   });
 }
 
+/* Categories treated as "strenuous/outdoor" for day-archetype purposes —
+   not a fit for the arrival day (low energy, luggage likely still with the
+   traveller) or the departure day (checkout has usually happened, so the
+   traveller is luggage-bound and time-boxed toward the airport). */
+const OUTDOOR_STRENUOUS_TYPES = ['nature', 'sports'];
+
+/*
+ * Swaps outdoor/strenuous-type places off the arrival day and the
+ * departure day and onto a middle day, geography permitting. Runs after
+ * day-clustering/day-assignment, before within-day sequencing, so the
+ * later geographic ordering (2-opt etc.) still applies to the corrected
+ * day assignments rather than fighting them. Picks the geographically
+ * closest eligible swap partner on a middle day to minimize disruption to
+ * cluster tightness — this is a targeted correction, not a re-cluster.
+ * No-op on 1-day trips (no "middle day" exists to swap into).
+ */
+function applyDayArchetypeSwaps(places, dayCount) {
+  if (dayCount < 2) return places;
+  const arrivalDay = 1;
+  const departureDay = dayCount;
+  const sensitiveDays = dayCount >= 3 ? [arrivalDay, departureDay] : [departureDay];
+  const middleDays = Array.from({ length: dayCount }, (_, i) => i + 1)
+    .filter((d) => !sensitiveDays.includes(d));
+  if (middleDays.length === 0) return places;
+
+  const result = [...places];
+  result.forEach((p, i) => {
+    if (!sensitiveDays.includes(Number(p.day))) return;
+    if (!OUTDOOR_STRENUOUS_TYPES.includes(p.type)) return;
+
+    let bestIdx = -1, bestDist = Infinity;
+    result.forEach((q, j) => {
+      if (i === j) return;
+      if (!middleDays.includes(Number(q.day))) return;
+      if (OUTDOOR_STRENUOUS_TYPES.includes(q.type)) return;
+      if (!isValidCoord(p.lat) || !isValidCoord(p.lng) || !isValidCoord(q.lat) || !isValidCoord(q.lng)) {
+        if (bestIdx === -1) bestIdx = j; // no coords to rank by — still a valid swap partner
+        return;
+      }
+      const d = haversineKm(toNum(p.lat), toNum(p.lng), toNum(q.lat), toNum(q.lng));
+      if (d < bestDist) { bestDist = d; bestIdx = j; }
+    });
+
+    if (bestIdx !== -1) {
+      const pDay = result[i].day;
+      const qDay = result[bestIdx].day;
+      result[i] = { ...result[i], day: qDay };
+      result[bestIdx] = { ...result[bestIdx], day: pDay };
+    }
+  });
+
+  return result;
+}
+
 /* Crude but grounded mode/time estimate — replace the body of this
-   function with a real OSRM/OpenRouteService call when that lands; every
-   caller already treats this as "the real travel time", so the swap is a
-   one-function change. */
+   function with a real OSRM/OpenRouteService/transit-routing call when
+   that lands; every caller already treats taxiMins/transitMins as ground
+   truth, so the swap is a one-function change. transitMins is padded over
+   taxiMins to account for station/stop access, waiting, and a likely
+   transfer — a flat approximation until a real transit API is wired in. */
 function estimateTravelMinutes(km) {
   if (km <= 1.2) {
     return { mode: 'walk', mins: Math.max(2, Math.round((km / 4.5) * 60)) };
   }
-  return { mode: 'transit/taxi', mins: Math.max(5, Math.round((km / 22) * 60)) };
+  const taxiMins = Math.max(5, Math.round((km / 22) * 60));
+  const transitMins = taxiMins + 12;
+  return { mode: 'transit', taxiMins, transitMins };
 }
 
 /* Computes travel time only between consecutive same-day stops — the gap
@@ -372,8 +493,12 @@ function buildTravelSegments(orderedPlaces) {
     if (a.day !== b.day) continue;
     if (!isValidCoord(a.lat) || !isValidCoord(a.lng) || !isValidCoord(b.lat) || !isValidCoord(b.lng)) continue;
     const km = haversineKm(toNum(a.lat), toNum(a.lng), toNum(b.lat), toNum(b.lng));
-    const { mode, mins } = estimateTravelMinutes(km);
-    segments.push({ day: a.day, from: a.name, to: b.name, km: Math.round(km * 10) / 10, mode, mins });
+    const est = estimateTravelMinutes(km);
+    if (est.mode === 'walk') {
+      segments.push({ day: a.day, from: a.name, to: b.name, km: Math.round(km * 10) / 10, mode: 'walk', mins: est.mins });
+    } else {
+      segments.push({ day: a.day, from: a.name, to: b.name, km: Math.round(km * 10) / 10, mode: 'transit', taxiMins: est.taxiMins, transitMins: est.transitMins });
+    }
   }
   return segments;
 }
@@ -451,6 +576,7 @@ export default function Itinerary() {
   const [budget, setBudget] = useState('moderate');
   const [perDayCount, setPerDayCount] = useState(3);
   const [interests, setInterests] = useState(['food', 'places']);
+  const [mustSee, setMustSee] = useState('');
 
   const [recommendedPlaces, setRecommendedPlaces] = useState([]);
   const [finalPlaces, setFinalPlaces] = useState([]);
@@ -505,44 +631,79 @@ export default function Itinerary() {
 
     const cats = interests.map((id) => [...CATEGORIES, ...UNIQUE_CATS].find((c) => c.id === id)?.title).filter(Boolean).join(', ');
     const dayCount = tripDayCount();
-    const targetCount = Math.min(30, Math.max(6, dayCount * perDayCount));
+    // requestedCount is what the traveller asked for via "Activities per day";
+    // targetCount deliberately overproduces (~40% more) so PlacePicker has
+    // real optional suggestions to offer rather than exactly enough to fill
+    // the requested pace and nothing more.
+    const requestedCount = dayCount * perDayCount;
+    const targetCount = Math.min(45, Math.max(10, Math.round(requestedCount * 1.4)));
+    const mustSeeList = mustSee.split(',').map((s) => s.trim()).filter(Boolean);
     const accomLine = noAccommodation
       ? 'Accommodation not yet booked — feel free to suggest a well-located area to stay.'
       : accommodation ? `Staying at: ${accommodation}.` : '';
     const arrivalLine = arrivalTime ? `Arrival: ${dates.from} at ${arrivalTime}.` : '';
     const departureLine = departureTime ? `Departure: ${dates.to} at ${departureTime}.` : '';
+    const mustSeeLine = mustSeeList.length
+      ? `The traveller has specifically asked to include these places — you MUST include every one of them in the JSON output, with accurate real coordinates, "source":"user_specified" and "tier":"core": ${mustSeeList.join(', ')}.`
+      : '';
 
-    const prompt = `Recommend exactly ${targetCount} specific real places for a ${dayCount}-day trip to ${destination}, matching: ${cats || 'general sightseeing'}.
+    const prompt = `Recommend exactly ${targetCount} specific real places for a ${dayCount}-day trip to ${destination}, matching: ${cats || 'general sightseeing'}. The traveller plans roughly ${requestedCount} activities total at their selected pace — return more than that as bonus options (see tier rule below).
 ${arrivalLine}
 ${departureLine}
 ${accomLine}
+${mustSeeLine}
 
 Respond with ONLY a valid JSON array, no markdown fences, no prose. Each object:
-{"id":"slug","name":"Place name","type":"category","description":"max 20 words","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number}
+{"id":"slug","name":"Place name","type":"category","description":"max 20 words","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number,"tier":"core|optional","dateUncertain":boolean}
 
-Use real, accurate coordinates for each place — this matters more than usual, since we group places into days by their coordinates afterward, not by anything you decide. "michelin" only for actual Michelin recognition, "unesco" only for actual World Heritage sites, "tourism" for official board picks, "tripadvisor" for known traveller favorites, "gem" for genuine local spots, "ai" as fallback. Favor a spatially varied set across ${destination} over clustering everything in one neighborhood, so the whole trip has enough ground to work with once we group it geographically.`;
+Use real, accurate coordinates for each place — this matters more than usual, since we group places into days by their coordinates afterward, not by anything you decide. "michelin" only for actual Michelin recognition, "unesco" only for actual World Heritage sites, "tourism" for official board picks, "tripadvisor" for known traveller favorites, "gem" for genuine local spots, "ai" as fallback. Favor a spatially varied set across ${destination} over clustering everything in one neighborhood, so the whole trip has enough ground to work with once we group it geographically.
+
+Mark roughly the first ${requestedCount} places as "tier":"core" (matching what the traveller asked for) and the rest as "tier":"optional" — bonus suggestions they can choose to add or skip. Across the full set, include at least ${dayCount * 3} genuine food/dining places and at least ${dayCount * 2} points of interest beyond food, so every day has real choice once places are grouped geographically — do not limit yourself to exactly the requested pace only.
+
+Do not include a place whose subject is a transit network, station-as-generic-concept, or mode of transport itself (e.g. "MRT Network", "City Bus System", "The Subway") — these are not destinations. If "Getting Around" is one of the traveller's interests, leave it out of this JSON array entirely; it's handled separately as travel tips, not a place card.
+
+Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are not fully confident falls within the traveller's exact trip dates; otherwise omit it or set it false. Never assert a specific date you're not confident about.`;
 
     try {
       const res = await fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2500, messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 3200, messages: [{ role: 'user', content: prompt }] }),
       });
       const data = await res.json();
       const text = data.content?.[0]?.text || '';
       const parsed = parsePlacesJSON(text);
       if (parsed.length === 0) throw new Error('No places returned');
+
+      // Backfill tier/source for anything Claude omitted, so downstream
+      // code can always rely on these fields being present.
+      const normalized = parsed.map((p, i) => ({
+        ...p,
+        source: p.source || 'ai',
+        tier: p.tier || (i < requestedCount ? 'core' : 'optional'),
+      }));
+      // Code-level backstop for the "MRT as a place" problem — the prompt
+      // already asks Claude to omit these, this just catches it if not.
+      const noTransitPlaces = stripTransitNetworkPlaces(normalized);
+
       // Catch coordinate hallucinations against the destination's real
       // borders before they can drag a cluster across a country (see
-      // fetchDestinationBounds / stripOutOfBoundsCoords). Runs in parallel
-      // with nothing else, so it's the one await here.
+      // fetchDestinationBounds / stripOutOfBoundsCoords).
       const bounds = await fetchDestinationBounds(destination);
-      const sanitized = stripOutOfBoundsCoords(parsed, bounds);
+      const sanitized = stripOutOfBoundsCoords(noTransitPlaces, bounds);
+
+      // Guarantee every traveller-named place survives, even if Claude
+      // dropped it — force-add with a fallback geocode if genuinely missing.
+      const withMustSee = await ensureMustSeePlaces(sanitized, mustSeeList, destination);
+
       // Day assignment is computed here, from the coordinates Claude returned —
       // not trusted from anything Claude said about "day" (see clusterPlacesByDay).
-      const clustered = clusterPlacesByDay(sanitized, dayCount);
+      const clustered = clusterPlacesByDay(withMustSee, dayCount);
       console.log('[Juzgo debug] Parsed places:', parsed);
       console.log('[Juzgo debug] Destination bounds:', bounds);
+      console.log('[Juzgo debug] Must-see check:', mustSeeList.map((name) => ({
+        name, included: withMustSee.some((p) => p.name?.toLowerCase().includes(name.toLowerCase())),
+      })));
       console.log('[Juzgo debug] Clustered by day:', clustered);
       window.__lastPlaces = clustered;
       setRecommendedPlaces(clustered);
@@ -575,7 +736,10 @@ Use real, accurate coordinates for each place — this matters more than usual, 
     // (nearest-neighbour) and compute real travel times from that sequence,
     // rather than asking Claude to guess either.
     const withDays = assignMissingDays(chosenPlaces, dayCount);
-    const orderedPlaces = sequencePlaces(withDays, dayCount);
+    // Move any strenuous/outdoor places off the arrival and departure days
+    // onto a middle day before sequencing — see applyDayArchetypeSwaps.
+    const archetypeAdjusted = applyDayArchetypeSwaps(withDays, dayCount);
+    const orderedPlaces = sequencePlaces(archetypeAdjusted, dayCount);
     const travelSegments = buildTravelSegments(orderedPlaces);
 
     setFinalPlaces(orderedPlaces);
@@ -585,21 +749,34 @@ Use real, accurate coordinates for each place — this matters more than usual, 
     setStep(4);
     setItineraryLoading(true);
 
-    const placesList = orderedPlaces.map((p) => `- ${p.name} (${p.type}, Day ${p.day})`).join('\n');
+    const placesList = orderedPlaces.map((p) => {
+      const dateNote = p.dateUncertain ? ' — date not confirmed, describe generally rather than asserting an exact date' : '';
+      const sourceNote = p.source === 'user_specified' ? ' — traveller specifically requested this place' : '';
+      return `- ${p.name} (${p.type}, Day ${p.day})${dateNote}${sourceNote}`;
+    }).join('\n');
+
     const segmentLines = travelSegments.length
-      ? travelSegments.map((s) => `Day ${s.day}: "${s.from}" → "${s.to}": ${s.mins} min (${s.mode})`).join('\n')
+      ? travelSegments.map((s) =>
+          s.mode === 'walk'
+            ? `Day ${s.day}: "${s.from}" → "${s.to}": ${s.mins} min walk`
+            : `Day ${s.day}: "${s.from}" → "${s.to}": ~${s.taxiMins} min by taxi/rideshare, or ~${s.transitMins} min by public transit (MRT/bus, includes station access, waiting, and any transfers)`
+        ).join('\n')
       : '(No coordinate-based segments available — use your judgement sparingly and keep timing vague, e.g. "a short trip".)';
     const accomLine = noAccommodation
       ? 'Accommodation is not yet booked — suggest a well-located area to stay and factor in flexible timing for Day 1.'
       : accommodation ? `Staying at: ${accommodation}. Factor travel time to/from this location into the schedule.` : '';
     const arrivalLine = arrivalTime ? `Arrival: ${dates.from} at ${arrivalTime} — Day 1 should start realistically after arrival, factoring in immigration, baggage, and transit to accommodation.` : '';
     const departureLine = departureTime ? `Departure: ${dates.to} at ${departureTime} — the final day should end with enough buffer time to reach the airport/departure point.` : '';
+    const dayArchetypeLine = dayCount >= 2
+      ? `Day 1 is the arrival day — keep the tone and any supplementary tips low-key, easing the traveller in. Day ${dayCount} is the departure day — assume standard hotel checkout around 11:00–12:00 and that the traveller is carrying or has stored their luggage until they leave for the airport; keep tips for this day calm and logistics-aware, and do not suggest or add any strenuous, muddy, or far-flung outdoor activity for it even in passing.`
+      : '';
 
     const prompt = `You are a travel guide creating a detailed day-by-day itinerary for ${destination}.
 Trip length: ${dayCount} days (${dates.from || 'flexible'} to ${dates.to || 'flexible'}). Travelers: ${travelers}. Budget: ${budget}.
 ${arrivalLine}
 ${departureLine}
 ${accomLine}
+${dayArchetypeLine}
 
 Build the itinerary using ONLY these places, in this exact order within each day — they've already been sequenced geographically to minimize backtracking, so do not reorder them:
 ${placesList}
@@ -609,7 +786,11 @@ ${segmentLines}
 
 Format with clear day headings (e.g. "## Day 1"), morning/afternoon/evening structure, and a short "Before You Go" tips section at the top. Keep it well-organized and practical. Do not invent additional must-see places beyond the list above, but you may add brief transport tips between stops.
 
-IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should spend at each location — let them decide that for themselves. Only mention timing when referring to travel time between consecutive stops, phrased as "Travel time to next stop: ~X mins" — using ONLY the pre-calculated numbers given above. If a transition isn't listed above, write "Travel time to next stop: plan for local transit" instead of guessing a number. Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
+IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should spend at each location — let them decide that for themselves. Only mention timing when referring to travel time between consecutive stops, using ONLY the pre-calculated numbers given above:
+- If a segment is a walk, phrase it as "🚶 Travel time to next stop: ~X mins (walk)".
+- If a segment gives both a taxi and a transit number, phrase it as something like "🚕 ~X mins by taxi, or 🚇 ~Y mins by public transit (MRT/bus)" — you may mention that a public bus is a realistic alternative to the MRT when it plausibly serves that route, but do not invent a different number for it; always use the given transit number.
+- If a transition isn't listed above, write "Travel time to next stop: plan for local transit" instead of guessing a number.
+Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
 
     setMessages([{ role: 'assistant', content: `Building your ${destination} itinerary…` }]);
 
@@ -741,6 +922,7 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
     setStep(1);
     setMessages([]);
     setDestination('');
+    setMustSee('');
     setRecommendedPlaces([]);
     setFinalPlaces([]);
   }
@@ -772,6 +954,16 @@ IMPORTANT phrasing rule for timing: do NOT suggest how long the traveller should
                 <p className={styles.hint}>
                   <span className={styles.hintLink} onClick={() => navigate('/plans')}>💬 Need data while you're there? Browse eSIM plans →</span>
                 </p>
+
+                <label className={styles.label}>Any must-see places already on your list? (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Mandai Wildlife Reserve, Jurong Bird Park"
+                  value={mustSee}
+                  onChange={(e) => setMustSee(e.target.value)}
+                  className={styles.input}
+                />
+                <p className={styles.hint}>Separate multiple places with commas — we'll make sure these are included.</p>
 
                 <div className={styles.twoCol}>
                   <div>
