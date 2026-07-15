@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import Footer from '../components/Footer';
 import styles from './Admin.module.css';
 
-const TABS = ['Orders', 'Users', 'Wallet', 'Logs', 'Resellers', 'Corporate', 'Catalog', 'Sales', 'Analytics'];
+const TABS = ['Orders', 'Users', 'Wallet', 'Logs', 'Resellers', 'Corporate', 'Catalog', 'Special Requests', 'Sales', 'Analytics'];
 
 /* ─────────────────── helpers ─────────────────── */
 function Spinner() { return <div className={styles.spinner} />; }
@@ -253,6 +253,14 @@ export default function Admin() {
           <div className={styles.tabContent}>
             <h2 className={styles.tabH2}>Catalog &amp; Pricing</h2>
             <CatalogManager />
+          </div>
+        )}
+
+        {/* ── Special Requests ── */}
+        {tab === 'Special Requests' && (
+          <div className={styles.tabContent}>
+            <h2 className={styles.tabH2}>Special Requests</h2>
+            <SpecialRequestsManager />
           </div>
         )}
 
@@ -838,6 +846,117 @@ function CatalogManager() {
         >
           Next →
         </button>
+      </div>
+    </div>
+  );
+}
+
+// Session 24 — "Special Requests" tab: read-only review log for /request-a-plan
+// searches. Unmatched rows are the demand signal for what to curate next;
+// matched-and-ordered rows show which not-yet-active packages are already
+// proving themselves. No write actions here — promoting a package into the
+// normal storefront is still done manually via the Catalog tab, on purpose
+// (see CONTEXT.md Session 24 — no auto-promotion this session).
+function SpecialRequestsManager() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState(''); // '', 'matched', 'unmatched'
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError('');
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const backend = process.env.REACT_APP_BACKEND_URL;
+        const res = await fetch(`${backend}/admin/special-requests`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Failed to load special requests.');
+        if (!cancelled) setRows(result);
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      }
+      if (!cancelled) setLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const filtered = rows.filter((r) => {
+    if (filter === 'matched') return r.matched;
+    if (filter === 'unmatched') return !r.matched;
+    return true;
+  });
+
+  const unmatchedCount = rows.filter((r) => !r.matched).length;
+  const orderedCount = rows.filter((r) => r.order_id).length;
+
+  return (
+    <div>
+      <div className={styles.catalogFilterBar}>
+        <div className={styles.filterPillGroup}>
+          {[
+            { value: '', label: `All (${rows.length})` },
+            { value: 'matched', label: `Matched (${rows.length - unmatchedCount})` },
+            { value: 'unmatched', label: `Unmatched (${unmatchedCount})` },
+          ].map((f) => (
+            <button
+              key={f.value}
+              className={`${styles.filterPill} ${filter === f.value ? styles.filterPillActive : ''}`}
+              onClick={() => setFilter(f.value)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error && <div className={styles.lookupErr} style={{ marginBottom: 14 }}>{error}</div>}
+
+      <div className={styles.catalogSummaryRow}>
+        {filtered.length.toLocaleString()} request{filtered.length === 1 ? '' : 's'}
+        {orderedCount > 0 && ` — ${orderedCount} led to a purchase`}
+        {loading ? ' — loading…' : ''}
+      </div>
+
+      <div className={styles.table}>
+        <div className={`${styles.tableRow} ${styles.tableHead} ${styles.specialRequestRow}`}>
+          <span>Requested</span>
+          <span>Data</span>
+          <span>Duration</span>
+          <span>Region</span>
+          <span>Result</span>
+          <span>Customer</span>
+          <span>Purchased?</span>
+        </div>
+
+        {!loading && filtered.length === 0 ? (
+          <EmptyState icon="🔍" text="No special requests logged yet." />
+        ) : (
+          filtered.map((r) => (
+            <div key={r.id} className={`${styles.tableRow} ${styles.specialRequestRow}`}>
+              <span className={styles.mono}>{new Date(r.created_at).toLocaleDateString()}</span>
+              <span>{r.data_amount || 'Any'}</span>
+              <span>{r.validity_days ? `${r.validity_days}d` : 'Any'}</span>
+              <span>{r.country_region || 'Any'}</span>
+              <span>
+                <span className={`${styles.matchBadge} ${r.matched ? styles.matchBadgeYes : styles.matchBadgeNo}`}>
+                  {r.matched ? `${(r.matched_package_ids || []).length} match(es)` : 'No match'}
+                </span>
+              </span>
+              <span>{r.customer_email || '—'}</span>
+              <span>
+                {r.order_id
+                  ? <span className={styles.orderedBadge}>Ordered</span>
+                  : '—'}
+              </span>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

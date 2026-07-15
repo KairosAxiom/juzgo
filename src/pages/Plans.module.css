@@ -285,6 +285,16 @@
 }
 .empty a { color: #1E8E5E; }
 
+.requestLinkWrap {
+  text-align: center;
+  margin-top: 44px;
+  padding-top: 28px;
+  border-top: 1px solid #E2E9E5;
+  color: #6A7A70;
+  font-size: 14px;
+}
+.requestLinkWrap a { color: #1E8E5E; font-weight: 600; }
+
 /* Responsive */
 @media (max-width: 900px) {
   .planGrid { grid-template-columns: repeat(2, 1fr); }

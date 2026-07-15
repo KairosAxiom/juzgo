@@ -67,7 +67,11 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
         const res = await fetch(`${backend}/order/corp-wallet-pay`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ planId: plan.id }),
+          body: JSON.stringify({
+            planId: plan.id,
+            orderSource: plan.orderSource || 'catalog',
+            specialRequestLogId: plan.specialRequestLogId || null,
+          }),
         });
         const data = await res.json();
         if (!data.success) {
@@ -80,7 +84,12 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
         const res = await fetch(`${backend}/order/wallet-pay`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ planId: plan.id, promoCode: promoCode || null }),
+          body: JSON.stringify({
+            planId: plan.id,
+            promoCode: promoCode || null,
+            orderSource: plan.orderSource || 'catalog',
+            specialRequestLogId: plan.specialRequestLogId || null,
+          }),
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Payment failed');
@@ -124,6 +133,8 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
               userId: user?.id || null,
               promoCode: promoApplied ? promoCode : null,
               priceSgd: total,
+              orderSource: plan.orderSource || 'catalog',
+              specialRequestLogId: plan.specialRequestLogId || null,
             }),
           });
           const orderData = await orderRes.json();

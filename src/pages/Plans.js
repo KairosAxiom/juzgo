@@ -266,7 +266,7 @@ export default function Plans() {
           </div>
         ) : rows.length === 0 ? (
           <div className={styles.empty}>
-            <p>No plans match your search yet. <br />Try a different destination or <a href="mailto:hello@juzgo.world">contact us</a>.</p>
+            <p>No plans match your search yet.<br />Try a different destination, or <a href="/request-a-plan">tell us what you need</a> and we'll check for a match.</p>
           </div>
         ) : grouped ? (
           <>
@@ -300,6 +300,14 @@ export default function Plans() {
               </div>
             )}
           </>
+        )}
+
+        {!loading && (
+          <div className={styles.requestLinkWrap}>
+            <p>
+              Not seeing what you need? <a href="/request-a-plan">Request a Plan</a>
+            </p>
+          </div>
         )}
       </main>
 

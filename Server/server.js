@@ -214,12 +214,12 @@ app.post('/webhook', async (req, res) => {
 app.post('/order/wallet-pay', requireAuth, async (req, res) => {
   const userId = req.authUser.id;
   const customerEmail = req.authUser.email;
-  const { planId, promoCode } = req.body;
+  const { planId, promoCode, orderSource, specialRequestLogId } = req.body;
 
   if (!planId) return res.status(400).json({ error: 'planId is required' });
 
   try {
-    const plan = await getActivePlanForCheckout(planId);
+    const plan = await resolvePlanForCheckout(planId, orderSource);
     if (!plan) return res.status(404).json({ error: 'Plan not found or no longer available' });
 
     const { data: profile, error: profErr } = await supabase
@@ -280,10 +280,18 @@ app.post('/order/wallet-pay', requireAuth, async (req, res) => {
         payment_method: 'wallet',
         referral_code,
         reseller_code,
+        order_source: orderSource === 'special_request' ? 'special_request' : 'catalog',
       })
       .select()
       .single();
     if (orderErr) throw orderErr;
+
+    if (orderSource === 'special_request' && specialRequestLogId) {
+      await supabase
+        .from('special_request_log')
+        .update({ selected_package_id: plan.package_id, order_id: order.id })
+        .eq('id', specialRequestLogId);
+    }
 
     const newBalance = parseFloat((currentBalance - total).toFixed(2));
     const { error: balanceErr } = await supabase
@@ -375,7 +383,7 @@ app.get('/corporate/wallet-balance', requireAuth, async (req, res) => {
 app.post('/order/corp-wallet-pay', requireAuth, async (req, res) => {
   const userId = req.authUser.id;
   const customerEmail = req.authUser.email;
-  const { planId } = req.body;
+  const { planId, orderSource, specialRequestLogId } = req.body;
 
   if (!planId) return res.status(400).json({ error: 'planId is required' });
 
@@ -400,7 +408,7 @@ app.post('/order/corp-wallet-pay', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Your corporate account is not active. Contact your admin.' });
     }
 
-    const plan = await getActivePlanForCheckout(planId);
+    const plan = await resolvePlanForCheckout(planId, orderSource);
     if (!plan) return res.status(404).json({ error: 'Plan not found or no longer available' });
 
     const total = parseFloat(plan.price_sgd || 0);
@@ -453,10 +461,18 @@ app.post('/order/corp-wallet-pay', requireAuth, async (req, res) => {
         order_code,
         status: 'completed',
         payment_method: 'corp_wallet',
+        order_source: orderSource === 'special_request' ? 'special_request' : 'catalog',
       })
       .select()
       .single();
     if (orderErr) throw orderErr;
+
+    if (orderSource === 'special_request' && specialRequestLogId) {
+      await supabase
+        .from('special_request_log')
+        .update({ selected_package_id: plan.package_id, order_id: order.id })
+        .eq('id', specialRequestLogId);
+    }
 
     // Atomic decrement (same RPC the top-up webhook uses to credit, just
     // negative) rather than fetch-then-update, to avoid a race between two
@@ -524,6 +540,7 @@ app.post('/order/create', async (req, res) => {
   const {
     paymentIntentId, planId, countryName, countryCode,
     customerEmail, customerName, userId, promoCode, priceSgd,
+    orderSource, specialRequestLogId,
   } = req.body;
 
   if (!paymentIntentId || !planId || !customerEmail) {
@@ -549,7 +566,7 @@ app.post('/order/create', async (req, res) => {
     }
 
     // Pull plan details from the DB rather than trusting client-supplied price/data.
-    const plan = await getActivePlanForCheckout(planId);
+    const plan = await resolvePlanForCheckout(planId, orderSource);
     if (!plan) {
       return res.status(404).json({ error: 'Plan not found or no longer available' });
     }
@@ -598,10 +615,18 @@ app.post('/order/create', async (req, res) => {
         stripe_payment_intent_id: paymentIntentId,
         referral_code,
         reseller_code,
+        order_source: orderSource === 'special_request' ? 'special_request' : 'catalog',
       })
       .select()
       .single();
     if (orderErr) throw orderErr;
+
+    if (orderSource === 'special_request' && specialRequestLogId) {
+      await supabase
+        .from('special_request_log')
+        .update({ selected_package_id: plan.package_id, order_id: order.id })
+        .eq('id', specialRequestLogId);
+    }
 
     if (userId && referral_code) await processReferralCredit(referral_code, userId);
 
@@ -1145,6 +1170,60 @@ async function getActivePlanForCheckout(packageId) {
   };
 }
 
+// Session 24 — "Request a Plan" checkout path. Looks a package up directly in
+// airalo_catalog with NO is_active requirement, since these packages are by
+// definition not currently curated for sale (see POST /special-request/match).
+// Price charged is minimum_selling_price_sgd — the catalog's own floor, same
+// number Admin's "Airalo Min." column shows — not a separately-set your_price,
+// since these packages were never given one via the Admin curation tab.
+// Deliberately does NOT touch juzgo_selected_plans or is_active in any way:
+// purchasing via this path never promotes a package into the normal
+// storefront. See CONTEXT.md Session 24 for the reasoning.
+async function getSpecialRequestPlanForCheckout(packageId) {
+  const { data: row, error } = await supabase
+    .from('airalo_catalog')
+    .select('package_id, country_region, scope, type, data_amount, validity_days, net_price_sgd, minimum_selling_price_sgd')
+    .eq('package_id', packageId)
+    .eq('type', 'sim')
+    .maybeSingle();
+  if (error || !row) return null;
+
+  let countryCode = null;
+  if (row.scope === 'country') {
+    const { data: covRow } = await supabase
+      .from('country_coverage_index')
+      .select('country_code')
+      .eq('package_id', packageId)
+      .eq('scope', 'country')
+      .maybeSingle();
+    countryCode = covRow?.country_code || null;
+  }
+
+  const plan_name = `${row.data_amount || 'Data'} · ${row.validity_days || '?'} Days`;
+
+  return {
+    package_id: row.package_id,
+    country_region: row.country_region,
+    country_code: countryCode,
+    scope: row.scope,
+    type: row.type,
+    data_amount: row.data_amount,
+    validity_days: row.validity_days,
+    plan_name,
+    price_sgd: row.minimum_selling_price_sgd,
+    net_price_sgd: row.net_price_sgd,
+  };
+}
+
+// Dispatcher used by every order-creation endpoint — picks the normal
+// curated-catalog lookup or the Special Request lookup based on orderSource.
+// Keeps the three checkout endpoints from each needing their own if/else.
+async function resolvePlanForCheckout(packageId, orderSource) {
+  return orderSource === 'special_request'
+    ? getSpecialRequestPlanForCheckout(packageId)
+    : getActivePlanForCheckout(packageId);
+}
+
 app.get('/admin/catalog', requireAdmin, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -1319,6 +1398,148 @@ app.get('/catalog/:package_id/countries', async (req, res) => {
       scope: data.scope,
       countries: data.coverages || [],
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------------
+// Session 24 — "Request a Plan" (Special Request channel).
+//
+// A second, parallel purchase path for when nothing in the curated /plans
+// storefront fits. Searches ONLY airalo_catalog rows that are NOT currently
+// active in juzgo_selected_plans — i.e. packages David has already reviewed
+// via the sync but hasn't (yet) turned on for sale. Matching is a plain
+// structured filter against real catalog values (data amount / duration /
+// region), not free-text or an AI call — every option offered to the user is
+// pulled live from the catalog, never hardcoded, which is what keeps this
+// "AI-ish" without needing the claude-proxy worker in the loop for matching
+// itself. Deliberately never touches juzgo_selected_plans/is_active —
+// purchasing this way does not promote a package into the normal storefront.
+// See CONTEXT.md Session 24 for full design discussion.
+// -----------------------------------------------------------------------------
+
+// Returns the set of package_ids currently active for normal sale, so the
+// Special Request flow can exclude them from both options and matches.
+async function getActivePackageIds() {
+  const { data } = await supabase
+    .from('juzgo_selected_plans')
+    .select('package_id')
+    .eq('is_active', true);
+  return new Set((data || []).map((r) => r.package_id));
+}
+
+// GET /special-request/options — dynamic tick-box values, sourced live from
+// airalo_catalog. Only considers sim-type packages not currently active.
+app.get('/special-request/options', async (req, res) => {
+  try {
+    const activeIds = await getActivePackageIds();
+
+    const { data, error } = await supabase
+      .from('airalo_catalog')
+      .select('package_id, data_amount, validity_days, country_region, scope')
+      .eq('type', 'sim');
+    if (error) throw error;
+
+    const inactive = (data || []).filter((row) => !activeIds.has(row.package_id));
+
+    const dataAmounts = [...new Set(inactive.map((r) => r.data_amount).filter(Boolean))];
+    const durations = [...new Set(inactive.map((r) => r.validity_days).filter((d) => d != null))]
+      .sort((a, b) => a - b);
+    // "Country/Region" tick options are the named region/global bundles
+    // (Asia, Europe, Discover Global, etc.) — same 11-label set the catalog
+    // sync derives scope from — not individual countries, to keep the tick
+    // list short and dynamic rather than ~1,800 checkboxes.
+    const regions = [...new Set(
+      inactive.filter((r) => r.scope === 'region' || r.scope === 'global').map((r) => r.country_region)
+    )].sort();
+
+    // Best-effort natural sort for data amounts like '1 GB', '10 GB', 'Unlimited'.
+    dataAmounts.sort((a, b) => {
+      const numA = parseFloat(a);
+      const numB = parseFloat(b);
+      if (Number.isNaN(numA)) return 1;
+      if (Number.isNaN(numB)) return -1;
+      return numA - numB;
+    });
+
+    res.json({ data_amounts: dataAmounts, durations, regions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /special-request/match — filters inactive sim packages against the
+// user's ticked selections, returns up to 3 candidates, and always logs the
+// request (matched or not) to special_request_log for admin follow-up.
+app.post('/special-request/match', async (req, res) => {
+  try {
+    const { dataAmount, validityDays, countryRegion, customerEmail, userId } = req.body;
+    const activeIds = await getActivePackageIds();
+
+    let query = supabase
+      .from('airalo_catalog')
+      .select('package_id, country_region, scope, data_amount, validity_days, minimum_selling_price_sgd')
+      .eq('type', 'sim');
+    if (dataAmount) query = query.eq('data_amount', dataAmount);
+    if (validityDays) query = query.eq('validity_days', validityDays);
+    if (countryRegion) query = query.eq('country_region', countryRegion);
+
+    const { data, error } = await query.limit(200);
+    if (error) throw error;
+
+    const candidates = (data || []).filter((row) => !activeIds.has(row.package_id));
+    const results = candidates.slice(0, 3).map((row) => ({
+      package_id: row.package_id,
+      country_region: row.country_region,
+      scope: row.scope,
+      data_amount: row.data_amount,
+      validity_days: row.validity_days,
+      price_sgd: row.minimum_selling_price_sgd,
+    }));
+
+    const matched = results.length > 0;
+
+    const { data: logRow, error: logErr } = await supabase
+      .from('special_request_log')
+      .insert({
+        user_id: userId || null,
+        customer_email: customerEmail || null,
+        data_amount: dataAmount || null,
+        validity_days: validityDays || null,
+        country_region: countryRegion || null,
+        matched,
+        matched_package_ids: matched ? results.map((r) => r.package_id) : null,
+      })
+      .select()
+      .single();
+    if (logErr) console.error('special_request_log insert failed', logErr);
+
+    res.json({
+      matched,
+      results,
+      specialRequestLogId: logRow?.id || null,
+      message: matched
+        ? null
+        : "I have tried my best to find a plan you requested but I have not. I will forward your request for inclusion in the future.",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/special-requests — review log for the Admin "Special Requests"
+// tab. Most recent first; unmatched requests are the demand signal for what
+// to curate next.
+app.get('/admin/special-requests', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('special_request_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -20,6 +20,7 @@ import CorporateRegister from './pages/CorporateRegister';
 import CorporateDashboard from './pages/CorporateDashboard';
 import ForcePasswordChange from './pages/ForcePasswordChange';
 import ResetPassword from './pages/ResetPassword';
+import RequestAPlan from './pages/RequestAPlan';
 
 function App() {
   // Capture ?ref= reseller/referral code on any page load — stores for 30 days
@@ -43,6 +44,7 @@ function App() {
       <Routes>
         <Route path="/"                      element={<Home />} />
         <Route path="/plans"                 element={<Plans />} />
+        <Route path="/request-a-plan"        element={<RequestAPlan />} />
         <Route path="/login"                 element={<Login />} />
         <Route path="/register"              element={<Register />} />
         <Route path="/dashboard"             element={<Dashboard />} />

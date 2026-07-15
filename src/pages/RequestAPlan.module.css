@@ -1,0 +1,194 @@
+/* RequestAPlan.module.css — Juzgo Special Request channel (Session 24) */
+
+.page { display: flex; flex-direction: column; min-height: 100vh; }
+
+.main {
+  flex: 1;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 80px 32px 90px;
+  width: 100%;
+}
+
+.header {
+  text-align: center;
+  max-width: 640px;
+  margin: 0 auto 40px;
+}
+
+.eyebrow {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: #2A6FDB;
+  margin-bottom: 18px;
+}
+
+.h1 {
+  font-family: 'Newsreader', serif;
+  font-weight: 500;
+  font-size: clamp(36px, 5vw, 52px);
+  line-height: 1.04;
+  letter-spacing: -.02em;
+  color: #16271E;
+  margin: 0 0 18px;
+}
+
+.sub {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #5B6B62;
+}
+
+.formCard {
+  background: #fff;
+  border: 1px solid #E2E9E5;
+  border-radius: 20px;
+  padding: 32px;
+}
+
+.field { margin-bottom: 28px; }
+.field:last-of-type { margin-bottom: 24px; }
+
+.fieldLabel {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #6A7A70;
+  margin-bottom: 12px;
+}
+
+.pillGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  padding: 9px 16px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #E2E9E5;
+  font-family: 'Hanken Grotesk', sans-serif;
+  background: #F4F8F6;
+  color: #5B6B62;
+  transition: background .15s, color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.pill:hover { border-color: #1E8E5E; color: #16271E; }
+.pillActive { background: #1E8E5E; color: #fff; border-color: #1E8E5E; }
+
+.hint {
+  font-size: 13px;
+  color: #6A7A70;
+  margin-bottom: 16px;
+}
+
+.btnSearch {
+  width: 100%;
+  background: #1E8E5E;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 15px 24px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: opacity .15s;
+}
+.btnSearch:hover { opacity: .92; }
+.btnSearch:disabled { opacity: .6; cursor: not-allowed; }
+
+.errorNote {
+  background: #FEF2F2;
+  border: 1px solid #F3D2D2;
+  color: #B91C1C;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.resultsWrap { margin-top: 36px; }
+
+.noMatchCard {
+  background: #F4F8F6;
+  border: 1px solid #E2E9E5;
+  border-radius: 16px;
+  padding: 24px;
+  text-align: center;
+  color: #16271E;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.groupHeader {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: #2A6FDB;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.resultsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.resultCard {
+  background: #fff;
+  border: 1px solid #E2E9E5;
+  border-radius: 16px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.resultRegion {
+  font-family: 'Newsreader', serif;
+  font-weight: 500;
+  font-size: 19px;
+  color: #16271E;
+}
+
+.resultData {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1E8E5E;
+}
+
+.resultMeta {
+  font-size: 13px;
+  color: #6A7A70;
+  margin-bottom: 8px;
+}
+
+.resultPrice {
+  font-family: 'DM Mono', monospace;
+  font-size: 20px;
+  color: #16271E;
+  margin-bottom: 14px;
+}
+
+.btnOrder {
+  background: #16271E;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: opacity .15s;
+}
+.btnOrder:hover { opacity: .88; }
