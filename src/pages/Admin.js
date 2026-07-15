@@ -765,9 +765,9 @@ function CatalogManager() {
           <span>Type</span>
           <span>Data</span>
           <span>Validity</span>
-          <span>Net (SGD)</span>
-          <span>Floor (SGD)</span>
-          <span>Your Price (SGD)</span>
+          <span>My Cost (SGD)</span>
+          <span>Airalo Min. (SGD)</span>
+          <span>Retail Price (SGD)</span>
           <span>Margin</span>
         </div>
 
