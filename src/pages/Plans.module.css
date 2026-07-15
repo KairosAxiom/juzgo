@@ -295,3 +295,208 @@
   .planGrid { grid-template-columns: 1fr; gap: 14px; }
   .affiliateBar { flex-direction: column; align-items: flex-start; }
 }
+
+/* ── Filter bar (scope pills + search) ── */
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.filterPillGroup {
+  display: flex;
+  gap: 4px;
+  background: #F1F6F3;
+  border-radius: 999px;
+  padding: 4px;
+}
+
+.filterPill {
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  font-family: 'Hanken Grotesk', sans-serif;
+  background: transparent;
+  color: #6A7A70;
+  transition: background .15s, color .15s;
+  white-space: nowrap;
+}
+.filterPill:hover { color: #16271E; }
+.filterPillActive { background: #1E8E5E; color: #fff; }
+
+.searchInput {
+  flex: 1;
+  min-width: 240px;
+  background: #fff;
+  border: 1px solid #E2E9E5;
+  border-radius: 14px;
+  padding: 13px 18px;
+  font-size: 15px;
+  color: #16271E;
+  outline: none;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: border-color .15s;
+}
+.searchInput:focus { border-color: #1E8E5E; }
+
+.errorNote {
+  background: #FEF2F2;
+  border: 1px solid #F3D2D2;
+  color: #B91C1C;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.groupHeader {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: #2A6FDB;
+  margin: 32px 0 16px;
+}
+.groupHeader:first-child { margin-top: 0; }
+
+.coversLink {
+  background: none;
+  border: none;
+  color: #2A6FDB;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  margin-top: 10px;
+  font-family: 'Hanken Grotesk', sans-serif;
+}
+.coversLink:hover { text-decoration: underline; }
+
+.loadMoreWrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 36px;
+}
+
+.btnLoadMore {
+  background: #F1F6F3;
+  border: 1px solid #E2E9E5;
+  border-radius: 999px;
+  padding: 13px 28px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #16271E;
+  cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif;
+  transition: border-color .15s;
+}
+.btnLoadMore:hover { border-color: #1E8E5E; color: #1E8E5E; }
+.btnLoadMore:disabled { opacity: .6; cursor: not-allowed; }
+
+/* ── Country list modal ── */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(22, 39, 30, .5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+
+.modalPanel {
+  background: #fff;
+  border-radius: 20px;
+  padding: 32px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.modalClose {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: #F1F6F3;
+  border: none;
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #6A7A70;
+}
+.modalClose:hover { color: #16271E; }
+
+.modalTitle {
+  font-family: 'Newsreader', serif;
+  font-weight: 500;
+  font-size: 24px;
+  color: #16271E;
+  margin: 0 0 6px;
+  padding-right: 40px;
+}
+
+.modalSub {
+  font-size: 13px;
+  color: #6A7A70;
+  margin: 0 0 16px;
+}
+
+.modalSearch {
+  background: #F4F8F6;
+  border: 1px solid #E2E9E5;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: #16271E;
+  outline: none;
+  font-family: 'Hanken Grotesk', sans-serif;
+  margin-bottom: 14px;
+  transition: border-color .15s;
+}
+.modalSearch:focus { border-color: #1E8E5E; }
+
+.modalError {
+  font-size: 13px;
+  color: #B91C1C;
+  margin-bottom: 12px;
+}
+
+.modalCountryList {
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px 16px;
+}
+
+.modalCountryRow {
+  font-size: 14px;
+  color: #3A4A41;
+  padding: 7px 0;
+  border-bottom: 1px solid #F0F5F2;
+}
+
+.modalEmptyNote {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  color: #94A299;
+  padding: 20px 0;
+  text-align: center;
+}
+
+@media (max-width: 580px) {
+  .filterBar { flex-direction: column; align-items: stretch; }
+  .searchInput { width: 100%; }
+  .modalCountryList { grid-template-columns: 1fr; }
+}

@@ -219,12 +219,8 @@ app.post('/order/wallet-pay', requireAuth, async (req, res) => {
   if (!planId) return res.status(400).json({ error: 'planId is required' });
 
   try {
-    const { data: plan, error: planErr } = await supabase
-      .from('esim_plans')
-      .select('*, countries(name, code, flag_emoji)')
-      .eq('id', planId)
-      .single();
-    if (planErr || !plan) return res.status(404).json({ error: 'Plan not found' });
+    const plan = await getActivePlanForCheckout(planId);
+    if (!plan) return res.status(404).json({ error: 'Plan not found or no longer available' });
 
     const { data: profile, error: profErr } = await supabase
       .from('profiles')
@@ -260,7 +256,6 @@ app.post('/order/wallet-pay', requireAuth, async (req, res) => {
     }
 
     const order_code = 'JZ-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-    const dataAmount = plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`;
 
     // Write the order first — only deduct the balance once we know the order
     // actually saved, so a DB failure can't charge the wallet for nothing.
@@ -270,12 +265,15 @@ app.post('/order/wallet-pay', requireAuth, async (req, res) => {
         user_id: userId,
         customer_email: customerEmail,
         customer_name: profile.full_name || null,
-        country_name: plan.countries?.name || null,
-        country_code: plan.countries?.code || null,
+        country_name: plan.country_region || null,
+        country_code: plan.country_code || null,
         package_title: plan.plan_name || null,
-        data_amount: dataAmount,
+        package_id: plan.package_id,
+        data_amount: plan.data_amount,
         validity_days: plan.validity_days,
         price_sgd: total,
+        your_price_at_sale: price,
+        net_price_at_sale: plan.net_price_sgd,
         discount_sgd,
         order_code,
         status: 'completed',
@@ -402,12 +400,8 @@ app.post('/order/corp-wallet-pay', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Your corporate account is not active. Contact your admin.' });
     }
 
-    const { data: plan, error: planErr } = await supabase
-      .from('esim_plans')
-      .select('*, countries(name, code, flag_emoji)')
-      .eq('id', planId)
-      .single();
-    if (planErr || !plan) return res.status(404).json({ error: 'Plan not found' });
+    const plan = await getActivePlanForCheckout(planId);
+    if (!plan) return res.status(404).json({ error: 'Plan not found or no longer available' });
 
     const total = parseFloat(plan.price_sgd || 0);
     const currentBalance = parseFloat(corp.wallet_balance || 0);
@@ -439,7 +433,6 @@ app.post('/order/corp-wallet-pay', requireAuth, async (req, res) => {
     }
 
     const order_code = 'JZ-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-    const dataAmount = plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`;
 
     const { data: order, error: orderErr } = await supabase
       .from('orders')
@@ -447,12 +440,15 @@ app.post('/order/corp-wallet-pay', requireAuth, async (req, res) => {
         user_id: userId,
         customer_email: customerEmail,
         customer_name: profile.full_name || null,
-        country_name: plan.countries?.name || null,
-        country_code: plan.countries?.code || null,
+        country_name: plan.country_region || null,
+        country_code: plan.country_code || null,
         package_title: plan.plan_name || null,
-        data_amount: dataAmount,
+        package_id: plan.package_id,
+        data_amount: plan.data_amount,
         validity_days: plan.validity_days,
         price_sgd: total,
+        your_price_at_sale: total,
+        net_price_at_sale: plan.net_price_sgd,
         discount_sgd: 0,
         order_code,
         status: 'completed',
@@ -553,13 +549,9 @@ app.post('/order/create', async (req, res) => {
     }
 
     // Pull plan details from the DB rather than trusting client-supplied price/data.
-    const { data: plan, error: planErr } = await supabase
-      .from('esim_plans')
-      .select('*, countries(name, code, flag_emoji)')
-      .eq('id', planId)
-      .single();
-    if (planErr || !plan) {
-      return res.status(404).json({ error: 'Plan not found' });
+    const plan = await getActivePlanForCheckout(planId);
+    if (!plan) {
+      return res.status(404).json({ error: 'Plan not found or no longer available' });
     }
 
     // Resolve the promo/referral code server-side so it lands on the right
@@ -583,7 +575,6 @@ app.post('/order/create', async (req, res) => {
     }
 
     const order_code = 'JZ-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-    const dataAmount = plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`;
 
     const { data: order, error: orderErr } = await supabase
       .from('orders')
@@ -591,12 +582,15 @@ app.post('/order/create', async (req, res) => {
         user_id: userId || null,
         customer_email: customerEmail,
         customer_name: customerName || null,
-        country_name: countryName || plan.countries?.name || null,
-        country_code: countryCode || plan.countries?.code || null,
+        country_name: countryName || plan.country_region || null,
+        country_code: countryCode || plan.country_code || null,
         package_title: plan.plan_name || null,
-        data_amount: dataAmount,
+        package_id: plan.package_id,
+        data_amount: plan.data_amount,
         validity_days: plan.validity_days,
         price_sgd: priceSgd || plan.price_sgd,
+        your_price_at_sale: plan.price_sgd,
+        net_price_at_sale: plan.net_price_sgd,
         discount_sgd,
         order_code,
         status: 'completed',
@@ -1087,6 +1081,70 @@ async function resolvePromoCode(rawCode) {
 //   scope    'country' | 'region' | 'global' | omit for all
 //   type     'sim' | 'topup' | omit for both
 //   search   matches against country_region or package_id (case-insensitive)
+// Reverse lookup: searching a country name (e.g. "Japan") should also surface
+// region/global bundles that COVER Japan (Asia, Discover Global, etc.), not
+// just rows whose own country_region/package_id literally contains the
+// search text. country_coverage_index (built by the catalog sync job) has
+// one row per (country, package) pair for exactly this purpose. Shared by
+// both /admin/catalog and the public /catalog/browse endpoint.
+async function resolveCoverageMatchIds(searchTerm) {
+  const { data } = await supabase
+    .from('country_coverage_index')
+    .select('package_id')
+    .ilike('country_name', `%${searchTerm}%`)
+    .limit(500);
+  return [...new Set((data || []).map((r) => r.package_id))];
+}
+
+// Looks up one package's live curation state for checkout — used by every
+// endpoint that actually charges money (order/wallet-pay, order/corp-wallet-pay,
+// order/create). Re-checks is_active server-side even though the storefront
+// only ever shows active packages, since a raw API request could otherwise
+// name any package_id directly. Returns null if the package doesn't exist or
+// isn't currently active for sale — callers should treat that as 404.
+async function getActivePlanForCheckout(packageId) {
+  const { data: row, error } = await supabase
+    .from('airalo_catalog')
+    .select('package_id, country_region, scope, type, data_amount, validity_days, net_price_sgd, juzgo_selected_plans!inner(is_active, your_price)')
+    .eq('package_id', packageId)
+    .eq('juzgo_selected_plans.is_active', true)
+    .maybeSingle();
+  if (error || !row) return null;
+
+  const selection = Array.isArray(row.juzgo_selected_plans) ? row.juzgo_selected_plans[0] : row.juzgo_selected_plans;
+  if (!selection) return null;
+
+  // Only single-country packages have one unambiguous ISO code — look it up
+  // from country_coverage_index (which stores a 1:1 self-mapping for these).
+  // Region/global packages cover many countries, so country_code stays null
+  // for them, which is correct (there isn't one right answer).
+  let countryCode = null;
+  if (row.scope === 'country') {
+    const { data: covRow } = await supabase
+      .from('country_coverage_index')
+      .select('country_code')
+      .eq('package_id', packageId)
+      .eq('scope', 'country')
+      .maybeSingle();
+    countryCode = covRow?.country_code || null;
+  }
+
+  const plan_name = `${row.data_amount || 'Data'} · ${row.validity_days || '?'} Days`;
+
+  return {
+    package_id: row.package_id,
+    country_region: row.country_region,
+    country_code: countryCode,
+    scope: row.scope,
+    type: row.type,
+    data_amount: row.data_amount,
+    validity_days: row.validity_days,
+    plan_name,
+    price_sgd: selection.your_price,
+    net_price_sgd: row.net_price_sgd,
+  };
+}
+
 app.get('/admin/catalog', requireAdmin, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -1105,18 +1163,7 @@ app.get('/admin/catalog', requireAdmin, async (req, res) => {
     if (req.query.type) query = query.eq('type', req.query.type);
     if (req.query.search) {
       const s = req.query.search.trim();
-      // Reverse lookup: searching a country name (e.g. "Japan") should also
-      // surface region/global bundles that COVER Japan (Asia, Discover
-      // Global, etc.), not just rows whose own country_region/package_id
-      // literally contains the search text. country_coverage_index (built by
-      // the catalog sync job) already has one row per (country, package)
-      // pair for exactly this purpose.
-      const { data: coverageMatches } = await supabase
-        .from('country_coverage_index')
-        .select('package_id')
-        .ilike('country_name', `%${s}%`)
-        .limit(500);
-      const coveredIds = [...new Set((coverageMatches || []).map((r) => r.package_id))];
+      const coveredIds = await resolveCoverageMatchIds(s);
 
       const orParts = [`country_region.ilike.%${s}%`, `package_id.ilike.%${s}%`];
       if (coveredIds.length > 0) {
@@ -1181,6 +1228,97 @@ app.put('/admin/catalog/:package_id', requireAdmin, async (req, res) => {
       throw error;
     }
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /catalog/browse — public storefront endpoint. Only returns packages
+// David has actually curated (juzgo_selected_plans.is_active = true), and
+// deliberately never selects any Airalo cost field (net_price, minimum
+// selling price) — those stay admin-only. Same scope/search filtering as
+// /admin/catalog, reusing resolveCoverageMatchIds for the same reverse
+// country-name lookup. Reference: juzgo-airalo-catalog-admin-spec.md §6.2.
+app.get('/catalog/browse', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 24));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    let query = supabase
+      .from('airalo_catalog')
+      .select(
+        'package_id, country_region, scope, type, data_amount, validity_days, rechargeable, activation_policy, is_fair_usage_policy, fair_usage_policy, coverages, juzgo_selected_plans!inner(your_price)',
+        { count: 'exact' }
+      )
+      .eq('juzgo_selected_plans.is_active', true)
+      // v1 scope is sim (new purchase) before topup — see DECISIONS.md. Topup
+      // packages exist in the catalog for a future fast-follow but shouldn't
+      // appear as separate browsable storefront items yet.
+      .eq('type', 'sim')
+      .order('country_region', { ascending: true })
+      .range(from, to);
+
+    if (req.query.scope) query = query.eq('scope', req.query.scope);
+    if (req.query.search) {
+      const s = req.query.search.trim();
+      const coveredIds = await resolveCoverageMatchIds(s);
+      const orParts = [`country_region.ilike.%${s}%`];
+      if (coveredIds.length > 0) orParts.push(`package_id.in.(${coveredIds.join(',')})`);
+      query = query.or(orParts.join(','));
+    }
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+
+    const rows = (data || []).map((row) => {
+      const sel = Array.isArray(row.juzgo_selected_plans) ? row.juzgo_selected_plans[0] : row.juzgo_selected_plans;
+      return {
+        package_id: row.package_id,
+        country_region: row.country_region,
+        scope: row.scope,
+        type: row.type,
+        data_amount: row.data_amount,
+        validity_days: row.validity_days,
+        rechargeable: row.rechargeable,
+        activation_policy: row.activation_policy,
+        is_fair_usage_policy: row.is_fair_usage_policy,
+        fair_usage_policy: row.fair_usage_policy,
+        // Only the count is useful on the list view (card says "Covers N
+        // countries"); the full list is lazy-loaded via /catalog/:id/countries
+        // when someone actually opens the modal, to keep this payload light.
+        coverage_count: Array.isArray(row.coverages) ? row.coverages.length : null,
+        price_sgd: sel?.your_price ?? null,
+      };
+    });
+
+    res.json({ rows, total: count || 0, page, limit });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /catalog/:package_id/countries — lazy-loaded full country list for the
+// "View List of Countries" modal (bundle product page §6.1, and the search
+// result card's "Covers X and N more" click-through §6.2). Cached data only
+// (airalo_catalog.coverages), no live Airalo call.
+app.get('/catalog/:package_id/countries', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('airalo_catalog')
+      .select('package_id, country_region, scope, coverages, juzgo_selected_plans!inner(is_active)')
+      .eq('package_id', req.params.package_id)
+      .eq('juzgo_selected_plans.is_active', true)
+      .maybeSingle();
+    if (error || !data) return res.status(404).json({ error: 'Package not found' });
+
+    res.json({
+      package_id: data.package_id,
+      country_region: data.country_region,
+      scope: data.scope,
+      countries: data.coverages || [],
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

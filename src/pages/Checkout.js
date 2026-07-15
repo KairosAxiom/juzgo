@@ -172,7 +172,7 @@ function CheckoutForm({ plan, country, user, walletBalance, isCorporate, corpWal
               <span className={styles.cartFlag}>{country?.flag_emoji}</span>
               <div className={styles.cartDetails}>
                 <div className={styles.cartName}>{plan.plan_name || `${country?.name} eSIM`}</div>
-                <div className={styles.cartMeta}>{plan.data_gb >= 100 ? 'Unlimited' : `${plan.data_gb} GB`} · {plan.validity_days} days</div>
+                <div className={styles.cartMeta}>{plan.data_amount} · {plan.validity_days} days</div>
               </div>
               <div className={styles.cartPrice}>SGD {price.toFixed(2)}</div>
             </div>

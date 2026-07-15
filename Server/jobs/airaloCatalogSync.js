@@ -172,12 +172,21 @@ function buildCodeToNameMap(entries) {
   return map;
 }
 
-function toCatalogRows(entries) {
+function resolveCoverages(rawCoverages, codeToName) {
+  if (!rawCoverages) return null;
+  return rawCoverages.map((cov) => ({
+    country_code: cov.code,
+    country_name: codeToName[cov.code] || cov.code,
+    networks: cov.networks || [],
+  }));
+}
+
+function toCatalogRows(entries, codeToName) {
   const rows = [];
   for (const entry of entries) {
     const scope = deriveScope(entry);
     for (const operator of entry.operators || []) {
-      const coverages = operator.coverages || null;
+      const coverages = resolveCoverages(operator.coverages, codeToName);
       for (const pkg of operator.packages || []) {
         rows.push({
           package_id: pkg.id,
@@ -311,7 +320,7 @@ async function runCatalogSync() {
   const codeToName = buildCodeToNameMap(entries);
   console.log(`Built code->name map for ${Object.keys(codeToName).length} countries.`);
 
-  const catalogRows = toCatalogRows(entries);
+  const catalogRows = toCatalogRows(entries, codeToName);
   console.log(`Flattened to ${catalogRows.length} individual packages (sim + topup).`);
 
   const coverageRows = toCoverageIndexRows(entries, codeToName);
