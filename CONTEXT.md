@@ -8,7 +8,7 @@ Latest commit: 18e5ef4f — "Pin typescript to 4.9.5 (react-scripts peer range) 
 - **Wire up real eSIM QR provisioning.** Confirmation emails (card, wallet, and corp-wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch. **No longer blocked on registration** — Airalo company registration is complete, sandbox API access confirmed working, API credentials (client_id/client_secret) obtained from the Partner Platform. Sandbox order flow reportedly works end-to-end except real QR code activation on a physical device, which is expected sandbox behavior (dummy/test values in sandbox responses) rather than a bug — full device-install verification only happens once switched to Production. **Now the one real remaining pre-launch blocker is actual coding/integration work, not registration status.** See `Context-Airalo-Integration.md` for the full scope, schema design, and open items before starting this build.
 - ~~Build the Admin Corporate approval tab.~~ — **DONE + fully live-tested Session 21**, including Suspend/Reactivate (David tested directly). Registration → pending → Approve → Suspend → Reactivate, all confirmed working end to end.
 - ~~Password strength enforcement on registration forms~~ — **DONE Session 21.** `Register.js` now also requires at least one letter and one number in addition to the existing ≥8 char minimum.
-- ~~Old orphaned test data cleanup~~ — **DONE Session 21.** `cleanup-session21.sql` run + a follow-up one-off fix for `davidlim@juzgo.world` (see Session 21 log Part 3). `corporates` test rows gone, profile fully cleared.
+- ~~Old orphaned test data cleanup~~ — **DONE Session 21.** `migrations/cleanup-session21.sql` run + a follow-up one-off fix for `davidlim@juzgo.world` (see Session 21 log Part 3). `corporates` test rows gone, profile fully cleared.
 - ~~Insufficient-corp-wallet-balance path~~ — **DONE + live-tested Session 21.** Reviewed clean, then extended per David's request with a self-pay-by-card fallback (Part 7) — live-tested working end to end on `corptest@juzgo.world`.
 - ~~Corp Portal wallet vs. self-paid spend accounting~~ — **DONE Session 21** (Part 8). Staff self-pay-by-card orders were already visible in the Corp Portal (backend returns all staff orders regardless of payment method) but were silently inflating "Total Spend." Now split into Wallet Spend / Staff Self-Paid with a Payment column badge, live-tested.
 - ~~Downloadable purchase receipts~~ — **DONE Session 21** (Part 9). PDF receipts on OrderConfirmation + Purchases, live-tested. Uncovered and fixed a real `npm ci` / TypeScript peer-dependency lockfile bug along the way (see Part 9 — worth reading if any future `npm install` work hits build failures).
@@ -660,7 +660,7 @@ Reviewed `POST /order/corp-wallet-pay` (`server.js`) and the corp branch of `han
 - To actually trigger and confirm this live: temporarily set a corp's `wallet_balance` below a plan's `price_sgd` in Supabase (e.g. `UPDATE corporates SET wallet_balance = 1.00 WHERE company_name = 'Juzgo Test Corp';`), then attempt a purchase as a linked staff/admin account. Expect: purchase blocked with the balance message on screen, a low-balance email to the corp's `contact_email`, and no new `orders` row. Restore the real balance afterward.
 
 **Part 3 — Test data cleanup SQL (written, run — with two follow-up fixes):**
-Wrote `cleanup-session21.sql` — a single transaction that (a) clears `is_corporate`/`corp_id`/`corp_role` on any profile pointing at one of the three named test corps *or already orphaned* (covers `davidlim@juzgo.world` plus catches any other stray orphan automatically, not just the known one), (b) deletes any leftover `corp_invites` rows tied to those corps, then (c) deletes the `corporates` rows themselves (Worldwide Pte Ltd / eSimConnect World Pte Ltd / Juzgo Test Corp). **Run successfully** — `corporates` table confirmed empty of test rows, `corp_invites` cleared.
+Wrote `migrations/cleanup-session21.sql` — a single transaction that (a) clears `is_corporate`/`corp_id`/`corp_role` on any profile pointing at one of the three named test corps *or already orphaned* (covers `davidlim@juzgo.world` plus catches any other stray orphan automatically, not just the known one), (b) deletes any leftover `corp_invites` rows tied to those corps, then (c) deletes the `corporates` rows themselves (Worldwide Pte Ltd / eSimConnect World Pte Ltd / Juzgo Test Corp). **Run successfully** — `corporates` table confirmed empty of test rows, `corp_invites` cleared.
 - **Fix 1 — orphan check gap:** the script's `WHERE corp_id IN (...) OR (corp_id IS NOT NULL AND corp_id NOT IN (...))` clause assumed an orphaned profile still has a (dangling) `corp_id`. `davidlim@juzgo.world`'s `corp_id` was already `NULL` from an earlier partial cleanup, so `is_corporate=true`/`corp_role='admin'` slipped past both conditions untouched. Fixed with a targeted one-off:
   ```sql
   UPDATE profiles SET is_corporate = false, corp_role = NULL
@@ -713,7 +713,7 @@ David asked whether staff could print/save a receipt for expense claims. Nothing
 **Files changed this session (full session, Parts 1–9):**
 - `src/pages/Admin.js`, `src/pages/Admin.module.css` (Corporate tab)
 - `src/pages/Register.js` (password strength)
-- `cleanup-session21.sql` (run, plus a targeted follow-up fix for `davidlim@juzgo.world`, see Part 3)
+- `migrations/cleanup-session21.sql` (run, plus a targeted follow-up fix for `davidlim@juzgo.world`, see Part 3)
 - `src/pages/Checkout.js`, `src/pages/Checkout.module.css` (self-pay-by-card fallback)
 - `src/pages/CorporateDashboard.js`, `src/pages/CorporateDashboard.module.css` (wallet vs. self-paid spend split)
 - `src/lib/generateReceipt.js` (new), `src/pages/OrderConfirmation.js`, `src/pages/Purchases.js` (PDF receipts)
@@ -774,7 +774,11 @@ src/pages/Pages.module.css           Shared styles (SavedItineraries, FindMyOrde
 Server/server.js                     Express backend — all API endpoints, incl. /corporate/staff/create, /corporate/wallet-balance, /order/corp-wallet-pay (Session 20)
 Server/.env                          Backend env vars (not tracked by Git)
 migrations/session20_staff_creation.sql  Manual SQL migration — corporates.email_domain, profiles.must_change_password (Session 20, not auto-applied)
+migrations/cleanup-session21.sql     Manual SQL migration — orphaned test corp/profile cleanup (Session 21, not auto-applied)
+migrations/airalo-integration-migration.sql  Manual SQL migration — airalo_catalog, country_coverage_index, juzgo_selected_plans, orders extension (Session 22, not yet run)
 ORG-UNIFICATION-SPEC.md              Design spec for future organizations/org_links rebuild (Session 20, Project Knowledge — not code)
+Context-Airalo-Integration.md        Airalo integration workstream primer (Session 22, Project Knowledge — not code)
+juzgo-airalo-catalog-admin-spec.md   Airalo integration build spec — schema, sync job, Admin Portal, storefront UX (Session 22, Project Knowledge — not code)
 ```
 
 ---
@@ -838,3 +842,14 @@ companion documents now committed to the repo root:
   flow (Session 17, still open) — these three pieces (fulfillment trigger, QR
   provisioning, and the Airalo catalog integration) are related but distinct, worth not
   conflating when picking up work.
+
+**Addendum (same day):** the Supabase migration for the schema above was drafted —
+`migrations/airalo-integration-migration.sql` — creating `airalo_catalog`,
+`country_coverage_index`, `juzgo_selected_plans`, and extending `orders`. Not yet run
+against Supabase. Contains a flagged open question about whether a `CHECK` constraint
+or a trigger is needed to enforce the pricing floor — see the file's inline comments,
+test both in the SQL Editor before committing to one. All existing repo-root `.sql`
+files were also reorganized into a `migrations/` folder this session for consistency —
+`session20_staff_creation.sql` and `juzgo-migration-seed.sql` were discovered to have
+never actually been tracked by git despite being referenced as if committed; confirm
+both are added and moved before relying on the `migrations/` path for them going forward.
