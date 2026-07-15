@@ -127,7 +127,6 @@ export default function Plans() {
   useEffect(() => {
     setPage(1);
     fetchPlans(1, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, search]);
 
   function onSearchChange(v) {
