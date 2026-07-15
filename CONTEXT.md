@@ -1,11 +1,19 @@
 # Juzgo — Living Project Context
-Last updated: July 9, 2026 (Session 21)
-Latest commit: 18e5ef4f — "Pin typescript to 4.9.5 (react-scripts peer range) to fix npm ci lockfile drift" (confirmed live in Cloudflare Pages Production, build succeeded)
+Last updated: July 15, 2026 (Session 23)
+Latest commit: 3be1a874 — "fix: remove eslint-disable comment for a rule not registered in this project, which broke the CI build" (confirmed live in Cloudflare Pages Production, build succeeded)
 
 ---
 
 ## ⚠️ Pre-Launch Checklist (do NOT go live without these)
-- **Wire up real eSIM QR provisioning.** Confirmation emails (card, wallet, and corp-wallet purchases) still say "Your eSIM QR code will follow in a separate email shortly" — nothing sends that follow-up yet. `qr_url` is left null on every order. Safe while only testers are using the site; needs the Cloudflare worker's `/airalo/orders` endpoint reviewed and wired in before real launch. **No longer blocked on registration** — Airalo company registration is complete, sandbox API access confirmed working, API credentials (client_id/client_secret) obtained from the Partner Platform. Sandbox order flow reportedly works end-to-end except real QR code activation on a physical device, which is expected sandbox behavior (dummy/test values in sandbox responses) rather than a bug — full device-install verification only happens once switched to Production. **Now the one real remaining pre-launch blocker is actual coding/integration work, not registration status.** See `Context-Airalo-Integration.md` for the full scope, schema design, and open items before starting this build.
+- **Real eSIM fulfillment — confirmed 100% mocked (Session 23).** Pulled the actual live Cloudflare Worker (`claude-proxy`) code this session and confirmed: `/airalo/orders` operates entirely against a hardcoded `MOCK_PACKAGES` object (its own disconnected 45-destination mini-catalog, unrelated to the real `airalo_catalog` table built in Session 23), generates a fake ICCID (`generateMockIccid()`), and a fake QR code pointing at a public `qrserver.com` generator encoding a sandbox placeholder string (`generateMockQrCode`/`generateMockQrUrl`). Zero calls to Airalo's real API exist anywhere in the worker (confirmed via in-editor search for `airalo.com/v2/orders` and `partners-api.airalo.com` — both "No results"). **No customer has ever received, or currently could receive, a real installable eSIM.** This is THE single remaining pre-launch blocker — bigger than previously understood, since earlier notes assumed this was mostly done pending registration; registration has been done since Session 22, but the actual order-submission code was never wired to the real API. Next session on this should: (1) add real `AIRALO_CLIENT_ID`/`AIRALO_CLIENT_SECRET` as Worker secrets, (2) replace the mock order logic in `/airalo/orders` with a real `POST` to Airalo's order-submission endpoint (see `partners-api.airalo.com` docs — same base URL for sandbox/production), (3) have `Server/server.js`'s `/order/create`, `/order/wallet-pay`, `/order/corp-wallet-pay` actually call this worker endpoint after writing the order row, to populate real `iccid`/`qr_url` (currently nothing sets these), (4) send the real QR in the follow-up email that's currently just a placeholder promise ("Your eSIM QR code will follow in a separate email shortly"). Only once this is done does the Check/Verify button (admin spec §6.3, not yet built) become meaningful — no real ICCID exists to check yet.
+- ~~Airalo catalog integration (Sessions 22–23)~~ — **DONE.** Full workstream complete: Supabase migration (4 tables + RLS + price-floor trigger), sandbox verification, real catalog sync job (~1,990 sandbox packages), Admin "Catalog & Pricing" tab (curate/price with live floor enforcement), and the storefront (`Plans.js` search/browse/country-modal, `Checkout.js`, and all 3 payment endpoints rewired off the old dummy `esim_plans` table onto the real catalog). Live-tested end to end: David activated a plan in Admin, `staff1@juzgo.world` purchased it on the live storefront, order recorded correctly in Admin → Orders. See Session 23 log for full detail, decisions made, and bugs found/fixed along the way. **Caveat:** this only covers catalog/pricing/browsing/checkout-record-keeping — it does NOT include real eSIM fulfillment (see item above), which is a separate, still-fully-mocked piece.
+- **New feature idea, spec'd but not built (Session 23): "Your Request" AI search box.** Customer-facing free-text box (e.g. on `/plans`) for when nothing in the curated catalog fits — "I need a lot of data for 2 weeks in Vietnam and Cambodia." Reuses the existing `claude-proxy` Worker pattern (same shape as the itinerary AI planner: free text → Claude → structured helpful response). Design decided this session:
+  - Searches the **full** `airalo_catalog` (not just `is_active = true` curated packages) — deliberately broader than the normal storefront.
+  - **This is a second, parallel purchase channel that intentionally bypasses the normal "Sell?" curation gate.** A package found this way can be shown to the customer complete with a real price and be directly purchasable, WITHOUT David having activated it via the Admin Catalog & Pricing tab first. Confirmed explicitly by David — not an oversight.
+  - Auto-price default for anything never priced before: the floor (`minimum_selling_price_sgd`) — same default the Admin Portal already uses the moment "Sell?" is first ticked, just triggered by a customer's search instead of David's click.
+  - Real implementation will need its own checkout path (or a variant of `getActivePlanForCheckout` in `server.js` that doesn't require `juzgo_selected_plans.is_active = true`) since the existing checkout helper deliberately hard-blocks anything not curated — that guard is correct for the normal storefront and must NOT be loosened globally, only bypassed specifically for this flow.
+  - Deliberately not built this session — flagged as deserving its own dedicated session given it's genuinely new payment-adjacent plumbing, not a small add-on.
+- **Open decision (Session 21, still unresolved):** whether to build the full `organizations`/`org_links` schema from `ORG-UNIFICATION-SPEC.md` (tour agency support) now, or keep the current corporate-only domain-lock and revisit tour agencies once there's an actual prospect. See Session 21 log Part 4 for the reasoning — leaning toward deferring, not yet finalized.
 - ~~Build the Admin Corporate approval tab.~~ — **DONE + fully live-tested Session 21**, including Suspend/Reactivate (David tested directly). Registration → pending → Approve → Suspend → Reactivate, all confirmed working end to end.
 - ~~Password strength enforcement on registration forms~~ — **DONE Session 21.** `Register.js` now also requires at least one letter and one number in addition to the existing ≥8 char minimum.
 - ~~Old orphaned test data cleanup~~ — **DONE Session 21.** `migrations/cleanup-session21.sql` run + a follow-up one-off fix for `davidlim@juzgo.world` (see Session 21 log Part 3). `corporates` test rows gone, profile fully cleared.
@@ -15,7 +23,6 @@ Latest commit: 18e5ef4f — "Pin typescript to 4.9.5 (react-scripts peer range) 
 - ~~Fix or remove `/order/wallet-pay` (404)~~ — DONE Session 18.
 - ~~Confirm Render `ADMIN_EMAIL`~~ — confirmed correct, `davidlim@juzgo.world`.
 - **Old orders have blank destinations.** Cosmetic, test data only (unchanged from Session 19).
-- **Open decision (Session 21, still unresolved):** whether to build the full `organizations`/`org_links` schema from `ORG-UNIFICATION-SPEC.md` (tour agency support) now, or keep the current corporate-only domain-lock and revisit tour agencies once there's an actual prospect. See Session 21 log Part 4 for the reasoning — leaning toward deferring, not yet finalized. This is the only open item besides QR provisioning.
 
 ---
 
@@ -31,7 +38,8 @@ Latest commit: 18e5ef4f — "Pin typescript to 4.9.5 (react-scripts peer range) 
 - Project: esimconnect (emsovpcmdnuxrhbyvnvb.supabase.co)
 - Org: Kairos Axiom (otrgxsjnnxogpcaydpni)
 - Account email: dlimyk@gmail.com
-- Tables: corp_invites, corporates, countries, esim_plans, esims, orders, profiles, push_subscriptions, resellers, saved_itineraries, usage_logs, users, voip_calls, waitlist, wallet_topups
+- Tables: airalo_catalog, corp_invites, corporates, countries, country_coverage_index, esim_plans, esims, juzgo_selected_plans, orders, profiles, push_subscriptions, resellers, saved_itineraries, usage_logs, users, voip_calls, waitlist, wallet_topups
+- New Session 23: `airalo_catalog` (system-owned, refreshed by `Server/jobs/airaloCatalogSync.js`), `country_coverage_index` (reverse country→package lookup, rebuilt every sync), `juzgo_selected_plans` (David's curation layer — Admin "Sell?"/price). All three have public SELECT RLS policies (service role bypasses for writes). `orders` extended with `package_id`, `iccid`, `net_price_at_sale`, `your_price_at_sale`, `esim_status_last_checked`, `esim_status_checked_at`. `esim_plans`/`countries` (the old dummy catalog) are now unused by any live code path but not dropped — no harm leaving them.
 - RLS: profiles, wallet_topups, voip_calls, push_subscriptions, resellers, saved_itineraries all have RLS enabled
 - saved_itineraries RLS: INSERT + SELECT + DELETE policies for authenticated users (added July 2026)
 - Currency: SGD primary, GST 9% applied at checkout
@@ -749,21 +757,23 @@ src/components/AffiliateBar.js       Affiliate partner pill bar
 src/components/TrustBadge.js         Trust signal strip
 src/components/LanguageToggle.js     Language dropdown
 src/pages/Home.js                    Landing page
-src/pages/Plans.js                   eSIM plan browser
+src/pages/Plans.js                   eSIM plan browser — REWRITTEN Session 23: real Airalo catalog (was dummy 45-destination), scope pills (Country/Region/Global), search with grouped results, lazy-loaded "View List of Countries" modal, "Load more" pagination. Reads GET /catalog/browse (public, cost fields never exposed).
+src/pages/Plans.module.css           Updated Session 23: filter bar, search input, country-list modal styles added; old country-dropdown styles left in place unused.
 src/pages/Login.js                   Login + forgot password + must_change_password redirect (Session 20)
 src/pages/Register.js                Register + nickname field; password requires ≥8 chars + letter + number (Session 21)
 src/pages/ResetPassword.js           Password reset (Supabase recovery token)
 src/pages/ForcePasswordChange.js     Forced password change for admin-created staff accounts (new, Session 20)
 src/pages/LoginSuccess.js            Email verify prompt (redirect-aware)
 src/pages/Dashboard.js               Overview/Referral/Reseller tabs — shows corp wallet for corp-linked accounts (Session 20)
-src/pages/Checkout.js                Card + wallet + promo codes; corp-linked accounts get corp-wallet checkout with two-step confirm, plus a self-pay-by-card fallback on insufficient balance (Session 20 + 21)
+src/pages/Checkout.js                Card + wallet + promo codes; corp-linked accounts get corp-wallet checkout with two-step confirm, plus a self-pay-by-card fallback on insufficient balance (Session 20 + 21). Session 23: displays plan.data_amount (pre-formatted string from Airalo) instead of the old numeric data_gb, which no longer exists on the plan shape.
 src/pages/OrderConfirmation.js       Post-purchase; "Download receipt (PDF)" button (Session 21)
 src/pages/Wallet.js                  eWallet top-up; blocked entirely for corp-linked accounts (Session 20)
 src/pages/Itinerary.js               4-stage AI planner + map + save/share/update
 src/pages/SavedItineraries.js        Saved trips list: Open/Share/Delete
 src/pages/Purchases.js               Order history; "Receipt (PDF)" button per order (Session 21)
 src/pages/FindMyOrder.js             Guest order lookup
-src/pages/Admin.js                   8-tab admin panel, incl. Corporate tab — fully live-tested Session 21 (Approve/Suspend/Reactivate all confirmed working)
+src/pages/Admin.js                   9-tab admin panel (Catalog tab added Session 23), incl. Corporate tab — fully live-tested Session 21 (Approve/Suspend/Reactivate all confirmed working). New "Catalog & Pricing" tab (Session 23): scope/type filter pills, search (matches bundle name AND countries covered — reverse lookup via country_coverage_index), inline editable pricing with live floor enforcement, margin display.
+src/pages/Admin.module.css           Updated Session 23: Catalog tab styles (filter pills, price input, pagination). Watch for the pre-existing `.tabContent [class*="tableRow"] { grid-template-columns: auto; }` generic rule — any new dense table needs a same-or-higher-specificity override (see `.table .catalogRow` for the pattern) or its custom column layout silently collapses to one column.
 src/pages/CorporateRegister.js       Corporate signup — now captures email_domain (Session 20)
 src/pages/CorporateDashboard.js      Corp admin dashboard — "Create a Staff Account" (Session 20); Staff Orders split into Wallet Spend vs. Staff Self-Paid (Session 21)
 src/lib/generateReceipt.js           NEW Session 21 — shared jsPDF receipt generator, used by OrderConfirmation.js + Purchases.js
@@ -771,11 +781,13 @@ src/pages/CorporateInvite.js         DEPRECATED Session 20 — unrouted, kept fo
 src/pages/CorporateAccept.js         DEPRECATED — was routed but broken; removed from routing Session 20
 src/pages/TermsAndConditions.js      T&C
 src/pages/Pages.module.css           Shared styles (SavedItineraries, FindMyOrder etc)
-Server/server.js                     Express backend — all API endpoints, incl. /corporate/staff/create, /corporate/wallet-balance, /order/corp-wallet-pay (Session 20)
-Server/.env                          Backend env vars (not tracked by Git)
+Server/server.js                     Express backend — all API endpoints. Session 23: added GET/PUT /admin/catalog (admin curation), public GET /catalog/browse + GET /catalog/:package_id/countries (storefront), shared helpers resolveCoverageMatchIds() and getActivePlanForCheckout(). Rewired /order/wallet-pay, /order/corp-wallet-pay, /order/create off the old esim_plans table onto the real catalog via getActivePlanForCheckout — zero remaining esim_plans references anywhere in the file (confirmed by grep). Every order now snapshots net_price_at_sale/your_price_at_sale.
+Server/jobs/airaloCatalogSync.js     NEW Session 23 — catalog sync job. Authenticates against Airalo, pulls full /v2/packages catalog, derives scope (country/region/global) via a hardcoded label list cross-checked against the CSV (NOT the live API, which only exposes local/global), builds a self-referential country code→name map (with an 11-entry static fallback for codes that only ever appear inside bundles), upserts airalo_catalog, rebuilds country_coverage_index. Run manually for now (`node Server/jobs/airaloCatalogSync.js`) — hourly scheduling not yet wired (Render Cron Job vs. Cloudflare Worker scheduled trigger, undecided).
+Server/.env                          Backend env vars (not tracked by Git). Session 23 additions: AIRALO_CLIENT_ID, AIRALO_CLIENT_SECRET.
 migrations/session20_staff_creation.sql  Manual SQL migration — corporates.email_domain, profiles.must_change_password (Session 20, not auto-applied)
 migrations/cleanup-session21.sql     Manual SQL migration — orphaned test corp/profile cleanup (Session 21, not auto-applied)
-migrations/airalo-integration-migration.sql  Manual SQL migration — airalo_catalog, country_coverage_index, juzgo_selected_plans, orders extension (Session 22, not yet run)
+migrations/airalo-integration-migration.sql  Manual SQL migration — airalo_catalog, country_coverage_index, juzgo_selected_plans, orders extension. RUN Session 23 (Session 22 draft, finalized and executed this session — RLS policies added, CHECK constraint replaced with a trigger since Postgres doesn't allow subqueries in CHECK at all).
+migrations/airalo-migration-addendum-currency.sql  NEW Session 23 — split airalo_catalog price columns into _usd/_sgd pairs (David wanted both stored, not just one), updated the price-floor trigger to enforce against SGD specifically since that's the checkout currency. RUN.
 ORG-UNIFICATION-SPEC.md              Design spec for future organizations/org_links rebuild (Session 20, Project Knowledge — not code)
 Context-Airalo-Integration.md        Airalo integration workstream primer (Session 22, Project Knowledge — not code)
 juzgo-airalo-catalog-admin-spec.md   Airalo integration build spec — schema, sync job, Admin Portal, storefront UX (Session 22, Project Knowledge — not code)
@@ -853,3 +865,152 @@ files were also reorganized into a `migrations/` folder this session for consist
 `session20_staff_creation.sql` and `juzgo-migration-seed.sql` were discovered to have
 never actually been tracked by git despite being referenced as if committed; confirm
 both are added and moved before relying on the `migrations/` path for them going forward.
+
+### Session 23 — July 15, 2026 (Airalo Integration — Steps 1–5 built, tested, and shipped)
+
+First actual coding session on the Airalo workstream (Sessions 1–22 were all
+design/planning or registration). Worked through the admin spec's build order steps
+1–5 in one session, testing and fixing real bugs at every stage rather than shipping
+code blind. Full story below; TL;DR is in the Pre-Launch Checklist at the top of this
+file.
+
+**Step 1 — Supabase migration.** Pulled Session 22's draft migration from GitHub and
+cross-checked it against the live `Server/server.js` before running anything (confirmed
+`orders` is the real table name with no column collisions). Resolved the CHECK-vs-trigger
+question the draft had flagged: dropped the CHECK constraint entirely — Postgres doesn't
+allow subqueries in CHECK constraints at all, so it would never have applied; went
+straight to a `BEFORE INSERT/UPDATE` trigger. Added RLS (public SELECT) matching the
+existing `countries`/`esim_plans` convention, since the tables need to be readable by
+the storefront's anon key later. Ran it, live-tested the price-floor trigger with a
+deliberately-too-low insert (correctly rejected) and a valid one (correctly accepted).
+**Mid-session addendum:** David wanted BOTH USD and SGD stored, not just one — added
+`migrations/airalo-migration-addendum-currency.sql` splitting every price column into
+`_usd`/`_sgd` pairs and re-pointing the trigger at the SGD column specifically (proven
+with a deliberately-crossed test: a price above the USD floor but below the SGD floor
+was correctly rejected, confirming the trigger checks SGD not USD).
+
+**Step 2 — sandbox verification.** Wrote a throwaway script, authenticated against
+Airalo's sandbox, pulled real `GET /v2/packages` data. Found the real response is nested
+three levels (`data[] → operators[] → packages[]`), confirmed every field name the
+schema needed, and found `coverages[].name` is literally just the ISO code, not a
+readable name (fixed properly in the sync job, see Step 3). **Biggest finding:**
+Airalo's live API only exposes a binary `local`/`global` operator type — there is no
+API-level "regional" distinction. Resolved by uploading the actual pricing CSV and
+cross-checking: confirmed exactly 11 non-country `Country Region` labels (`Discover
+Global` = the one true global label; 10 continent/multi-country names = region), and
+confirmed the live API's `title` field matches those CSV labels exactly — so scope can
+be derived from a small hardcoded lookup at sync time with zero dependency on the CSV
+at runtime. David separately noticed Airalo's own consumer storefront shows the same
+Country/Region/Global split as filter pills — good real-world validation this wasn't an
+invented taxonomy.
+
+**Step 3 — real catalog sync.** Wrote `Server/jobs/airaloCatalogSync.js` end to end:
+auth, paginated fetch, scope derivation (country_code presence → 'country'; else
+title-matched against the 11-label list, defaulting to 'region' with a console.warn for
+anything unrecognized as a safety net), self-referential country code→name map built
+from the same sync pass (no external library or CSV dependency needed), upsert into
+`airalo_catalog`, full rebuild of `country_coverage_index`. First real run against
+sandbox: 1,990 packages (1,863 country / 108 region / 19 global), 7,475 coverage rows,
+~9–11s. Found 11 country codes with no resolvable name (countries that appear inside
+bundles but have no standalone package of their own in sandbox) — added a small static
+fallback map (Mauritania, Sudan, Puerto Rico, Åland Islands, Guernsey, French Polynesia,
+San Marino, Iran, Russia, plus the deprecated `AN`/non-standard `FR-GP` codes), re-ran
+clean with zero warnings. **Later in the session (during Step 5 prep),** found the
+sync job stored Airalo's raw `{name: code}` coverage shape instead of resolving it to
+`{country_code, country_name, networks}` as the schema's own column comment specified —
+fixed and re-run; this is why the sync job needed running twice this session.
+
+**Step 4 — Admin "Catalog & Pricing" tab.** Built `GET`/`PUT /admin/catalog` in
+`server.js` (paginated, filterable, joins `juzgo_selected_plans` for current Sell?/price
+state) and a new `CatalogManager` component in `Admin.js` (scope + type filter pills,
+search, inline-editable price with live floor validation, margin display). Verified
+against the live server file syntax-checked before every handoff (`node --check`,
+`esbuild` for the JSX), not just eyeballed. **Three real bugs found and fixed via live
+testing, not assumption:**
+1. Column labels were confusing — David correctly flagged that "Net/Floor/Your Price"
+   didn't read as "cost / legal minimum / what I actually charge." Renamed to
+   "My Cost / Airalo Min. / Retail Price."
+2. Searching a country name (e.g. "Japan") while filtered to Region or Global correctly
+   returned zero results — but this read as a bug rather than expected behavior, since
+   Region/Global bundles don't literally have "Japan" in their own name. Extended the
+   search to also check `country_coverage_index` (reverse lookup: does this bundle
+   *cover* the searched country), so searching "Japan" now also surfaces "Asia" and
+   "Discover Global." This reuses the exact mechanism Step 5's storefront search needed
+   anyway, just arriving one step early.
+3. Confirmed (not a bug) that this sandbox account's catalog is 100% `sim` type — zero
+   `topup` packages exist in sandbox at all, unlike the production CSV (~half topup).
+   `Sim` alone returning the full 1,990-package total proved this conclusively.
+
+**Step 5 — storefront rewire.** Before touching `Plans.js`, mapped the full payment
+dependency chain: `Checkout.js` sends `plan.id` to FOUR backend endpoints
+(`/create-payment-intent`, `/order/wallet-pay`, `/order/corp-wallet-pay`,
+`/order/create`), all of which independently re-queried the old `esim_plans` table by
+UUID to get an authoritative price before charging real money. Flagged this clearly
+before writing code, since "swap the catalog" genuinely meant "rewire 4 payment
+endpoints," not just a display change — David confirmed doing the full rewire in one
+pass. Built:
+- Two new shared `server.js` helpers: `resolveCoverageMatchIds()` (extracted from the
+  Admin endpoint, reused by the public one) and `getActivePlanForCheckout()` (the one
+  place all payment logic now looks up a plan — re-checks `is_active = true`
+  server-side even though the storefront only ever shows active packages, as
+  defense-in-depth against a raw API request naming an arbitrary package_id).
+- New public `GET /catalog/browse` and `GET /catalog/:package_id/countries` —
+  deliberately never select any Airalo cost field (`net_price`/`minimum_selling_price`),
+  since the existing RLS policy on `airalo_catalog` allows full public read (fine for
+  the admin service-role client, NOT fine for a customer's anon key, which would
+  otherwise be able to see Juzgo's actual cost from Airalo via dev tools).
+- Rewired all 3 payment endpoints off `esim_plans` onto `getActivePlanForCheckout()`.
+  Along the way, started actually populating `orders.net_price_at_sale` /
+  `your_price_at_sale` — columns that existed in the schema since Step 1 but that
+  nothing was writing to before this session. Feeds directly into the future P&L
+  dashboard (admin spec §7, not yet built).
+- Full `Plans.js` rewrite: scope pills, search with narrowest-to-broadest grouped
+  results when searching without a scope filter (per `DECISIONS.md`'s agreed search
+  UX), lazy-loaded "View List of Countries" modal, "Load more" pagination. Dropped flag
+  emojis from plan cards as a deliberate simplification — region/global bundles cover
+  many countries, so there's no single flag, and rigging one up for country-scope cards
+  specifically would've added another cross-table lookup for a cosmetic detail.
+- One-line `Checkout.js` change: displays `plan.data_amount` (Airalo's pre-formatted
+  string) instead of recomputing from a `data_gb` number that no longer exists.
+
+**Deploy hit a real failure, found and fixed live:** first push of the Step 5 files
+failed Cloudflare Pages' build — `[eslint] Definition for rule
+'react-hooks/exhaustive-deps' was not found`. An `eslint-disable-next-line` comment in
+the new `Plans.js` referenced a rule not registered in this project's ESLint config;
+CRA treats disabling a nonexistent rule as a hard compile error, not a no-op. Removed
+the comment, redeployed clean. Worth remembering: this project's build pipeline WILL
+fail hard on this specific mistake — don't add `eslint-disable` comments for rules
+without first confirming they're actually part of this project's active config.
+
+**Full end-to-end live test, confirmed working by David:** activated a plan in Admin →
+Catalog & Pricing → purchased it on the live storefront as `staff1@juzgo.world` → order
+appeared correctly in Admin → Orders. Real catalog, real curation, real checkout, all
+working together for the first time.
+
+**Critical finding that stopped the session before Step 6:** pulled the actual live
+Cloudflare Worker code (David's own initiative, checking for a `/airalo/orders` real-API
+implementation before Step 6 was scoped) and found `/airalo/orders` is 100% mocked —
+hardcoded `MOCK_PACKAGES`, fake ICCID, fake QR via a public QR generator, zero real
+Airalo API calls anywhere in the worker. This means Step 6 (Check/Verify button) can't
+be meaningfully built yet — there's no real ICCID to check, because no real Airalo order
+has ever actually been placed by this system. Full detail and next steps captured in the
+Pre-Launch Checklist at the top of this file — this is now THE pre-launch blocker,
+bigger than previously understood.
+
+**New feature captured for a future session, not built:** "Your Request" — a
+customer-facing AI search box for when the curated catalog doesn't have what someone
+needs, reusing the `claude-proxy` Worker pattern. Full design captured in the
+Pre-Launch Checklist above. Notably: David wants this to be a second purchase channel
+that deliberately bypasses the normal `juzgo_selected_plans.is_active` curation gate —
+confirmed explicitly, not an oversight, but flagged as needing its own dedicated session
+given it's genuinely new payment-adjacent plumbing.
+
+**Next session should pick ONE of two directions:**
+1. Real eSIM fulfillment — wire the Cloudflare Worker's `/airalo/orders` to Airalo's
+   actual order-submission API, get real ICCID/QR flowing into `orders`, send it in the
+   confirmation email. This unblocks Step 6 (Check/Verify) as a natural follow-on.
+2. "Your Request" AI search — build the free-text search + Claude-powered matching +
+   the parallel non-curated purchase path, per the design captured above.
+Both are substantial, payment-adjacent, and deserve fresh focus rather than being
+tacked onto the end of a long session — that's exactly why neither was started tonight
+despite being readily discussable.
