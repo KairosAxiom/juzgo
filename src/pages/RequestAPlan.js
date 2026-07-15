@@ -19,9 +19,10 @@ export default function RequestAPlan() {
   const { t } = useLang();
   const [user, setUser] = useState(null);
 
-  const [options, setOptions] = useState({ data_amounts: [], durations: [], regions: [] });
+  const [options, setOptions] = useState({ data_amounts: [], durations: [], regions: [], region_scopes: {} });
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [optionsError, setOptionsError] = useState('');
+  const [regionFilter, setRegionFilter] = useState('');
 
   const [dataAmount, setDataAmount] = useState('');
   const [validityDays, setValidityDays] = useState('');
@@ -111,6 +112,17 @@ export default function RequestAPlan() {
 
   const isUnlimited = (r) => r.data_amount?.toLowerCase() === 'unlimited';
 
+  const visibleRegions = regionFilter.trim()
+    ? options.regions.filter((r) => r.toLowerCase().includes(regionFilter.trim().toLowerCase()))
+    : options.regions;
+
+  // A country appearing in this list doesn't mean nothing is offered for it
+  // at all — it means the SPECIFIC combination selected above isn't. Only
+  // worth explaining once a specific country is picked, not for "Any".
+  const regionHint = countryRegion && options.region_scopes?.[countryRegion] === 'country'
+    ? `${countryRegion} may already have other plans on our main /plans page — this checks specifically for the data/duration you've selected above.`
+    : '';
+
   return (
     <div className={styles.page}>
       <main className={styles.main}>
@@ -174,6 +186,15 @@ export default function RequestAPlan() {
 
           <div className={styles.field}>
             <div className={styles.fieldLabel}>Country / Region</div>
+            {options.regions.length > 8 && (
+              <input
+                type="text"
+                placeholder="Type to filter — e.g. Japan, Asia…"
+                value={regionFilter}
+                onChange={(e) => setRegionFilter(e.target.value)}
+                className={styles.regionFilterInput}
+              />
+            )}
             <div className={styles.pillGroup}>
               <button
                 type="button"
@@ -182,7 +203,7 @@ export default function RequestAPlan() {
               >
                 Any
               </button>
-              {options.regions.map((r) => (
+              {visibleRegions.map((r) => (
                 <button
                   key={r}
                   type="button"
@@ -190,10 +211,17 @@ export default function RequestAPlan() {
                   onClick={() => setCountryRegion(r)}
                 >
                   {r}
+                  {options.region_scopes?.[r] && options.region_scopes[r] !== 'country' && (
+                    <span className={styles.pillTag}>{options.region_scopes[r]}</span>
+                  )}
                 </button>
               ))}
+              {options.regions.length > 0 && visibleRegions.length === 0 && (
+                <span className={styles.hint}>No matches for "{regionFilter}".</span>
+              )}
             </div>
           </div>
+          {regionHint && <div className={styles.hint}>{regionHint}</div>}
 
           {optionsLoading && <div className={styles.hint}>Loading current options…</div>}
 

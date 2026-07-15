@@ -1446,13 +1446,17 @@ app.get('/special-request/options', async (req, res) => {
     const dataAmounts = [...new Set(inactive.map((r) => r.data_amount).filter(Boolean))];
     const durations = [...new Set(inactive.map((r) => r.validity_days).filter((d) => d != null))]
       .sort((a, b) => a - b);
-    // "Country/Region" tick options are the named region/global bundles
-    // (Asia, Europe, Discover Global, etc.) — same 11-label set the catalog
-    // sync derives scope from — not individual countries, to keep the tick
-    // list short and dynamic rather than ~1,800 checkboxes.
-    const regions = [...new Set(
-      inactive.filter((r) => r.scope === 'region' || r.scope === 'global').map((r) => r.country_region)
-    )].sort();
+    // "Country/Region" tick options: any country_region name that has AT
+    // LEast one currently-inactive package. This deliberately includes
+    // individual countries, not just named region/global bundles — a
+    // country can already be active for one config (e.g. 5GB/7Days) while
+    // still having other configs (e.g. 20GB/30Days) sitting inactive, and
+    // that gap is exactly what this channel exists to surface. A country
+    // appearing here does NOT mean nothing is offered for it; it means at
+    // least one specific combination isn't currently for sale.
+    const regions = [...new Set(inactive.map((r) => r.country_region))].sort();
+    const regionScopes = {};
+    inactive.forEach((r) => { regionScopes[r.country_region] = r.scope; });
 
     // Best-effort natural sort for data amounts like '1 GB', '10 GB', 'Unlimited'.
     dataAmounts.sort((a, b) => {
@@ -1463,7 +1467,7 @@ app.get('/special-request/options', async (req, res) => {
       return numA - numB;
     });
 
-    res.json({ data_amounts: dataAmounts, durations, regions });
+    res.json({ data_amounts: dataAmounts, durations, regions, region_scopes: regionScopes });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

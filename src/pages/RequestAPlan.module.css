@@ -88,6 +88,34 @@
   margin-bottom: 16px;
 }
 
+.regionFilterInput {
+  width: 100%;
+  background: #F4F8F6;
+  border: 1px solid #E2E9E5;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: #16271E;
+  outline: none;
+  font-family: 'Hanken Grotesk', sans-serif;
+  margin-bottom: 10px;
+  transition: border-color .15s;
+}
+.regionFilterInput:focus { border-color: #1E8E5E; }
+
+.pillTag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  background: rgba(0,0,0,.08);
+}
+.pillActive .pillTag { background: rgba(255,255,255,.3); }
+
 .btnSearch {
   width: 100%;
   background: #1E8E5E;
