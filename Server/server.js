@@ -1105,7 +1105,24 @@ app.get('/admin/catalog', requireAdmin, async (req, res) => {
     if (req.query.type) query = query.eq('type', req.query.type);
     if (req.query.search) {
       const s = req.query.search.trim();
-      query = query.or(`country_region.ilike.%${s}%,package_id.ilike.%${s}%`);
+      // Reverse lookup: searching a country name (e.g. "Japan") should also
+      // surface region/global bundles that COVER Japan (Asia, Discover
+      // Global, etc.), not just rows whose own country_region/package_id
+      // literally contains the search text. country_coverage_index (built by
+      // the catalog sync job) already has one row per (country, package)
+      // pair for exactly this purpose.
+      const { data: coverageMatches } = await supabase
+        .from('country_coverage_index')
+        .select('package_id')
+        .ilike('country_name', `%${s}%`)
+        .limit(500);
+      const coveredIds = [...new Set((coverageMatches || []).map((r) => r.package_id))];
+
+      const orParts = [`country_region.ilike.%${s}%`, `package_id.ilike.%${s}%`];
+      if (coveredIds.length > 0) {
+        orParts.push(`package_id.in.(${coveredIds.join(',')})`);
+      }
+      query = query.or(orParts.join(','));
     }
 
     const { data, error, count } = await query;
