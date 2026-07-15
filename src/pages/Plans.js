@@ -245,6 +245,9 @@ export default function Plans() {
             onChange={(e) => onSearchChange(e.target.value)}
             className={styles.searchInput}
           />
+          <a href="/request-a-plan" className={styles.requestPlanCta}>
+            Can't find a plan that suits you? <span>Request a Plan →</span>
+          </a>
         </div>
 
         {/* Affiliate bar */}
@@ -300,14 +303,6 @@ export default function Plans() {
               </div>
             )}
           </>
-        )}
-
-        {!loading && (
-          <div className={styles.requestLinkWrap}>
-            <p>
-              Not seeing what you need? <a href="/request-a-plan">Request a Plan</a>
-            </p>
-          </div>
         )}
       </main>
 

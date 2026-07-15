@@ -285,16 +285,6 @@
 }
 .empty a { color: #1E8E5E; }
 
-.requestLinkWrap {
-  text-align: center;
-  margin-top: 44px;
-  padding-top: 28px;
-  border-top: 1px solid #E2E9E5;
-  color: #6A7A70;
-  font-size: 14px;
-}
-.requestLinkWrap a { color: #1E8E5E; font-weight: 600; }
-
 /* Responsive */
 @media (max-width: 900px) {
   .planGrid { grid-template-columns: repeat(2, 1fr); }
@@ -353,6 +343,27 @@
   transition: border-color .15s;
 }
 .searchInput:focus { border-color: #1E8E5E; }
+
+.requestPlanCta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 13px 18px;
+  border-radius: 999px;
+  background: #EAF6EF;
+  border: 1px solid #CBE9D8;
+  font-size: 13px;
+  color: #16271E;
+  text-decoration: none;
+  transition: border-color .15s, background .15s;
+}
+.requestPlanCta:hover { background: #DFF2E7; border-color: #1E8E5E; }
+.requestPlanCta span { color: #1E8E5E; font-weight: 700; }
+
+@media (max-width: 720px) {
+  .requestPlanCta { width: 100%; justify-content: center; }
+}
 
 .errorNote {
   background: #FEF2F2;
