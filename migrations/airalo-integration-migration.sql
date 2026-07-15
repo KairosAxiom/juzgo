@@ -3,7 +3,23 @@
 -- Project: Juzgo (esimconnect / emsovpcmdnuxrhbyvnvb.supabase.co)
 -- Reference: juzgo-airalo-catalog-admin-spec.md §2
 -- Run manually via Supabase SQL Editor (this project does not auto-apply migrations
--- — same convention as migrations/session20_staff_creation.sql)
+-- — same convention as migrations/session20_staff_creation.sql and
+-- migrations/juzgo-migration-seed.sql)
+--
+-- Session 23 update: verified against the live repo (Server/server.js) before
+-- finalizing —
+--   - `orders` is confirmed as the real table name, with a real `id` PK. No column
+--     name collisions with the new Airalo columns below (existing orders columns are
+--     price_sgd, data_amount, package_title, country_name/code, etc. — none of the
+--     six new columns overlap).
+--   - Resolved the CHECK-vs-trigger question flagged in the Session 22 draft: dropped
+--     the subquery CHECK constraint entirely. Postgres does not allow subqueries in
+--     CHECK constraints at all (hard parser error, not just "unreliable") — so this
+--     was never going to work, no need to test both. Trigger only, below.
+--   - Added RLS enable + public-read policies, matching the exact convention already
+--     used for countries/esim_plans in migrations/juzgo-migration-seed.sql (backend
+--     writes use the Supabase service role key in server.js, which bypasses RLS
+--     entirely — so these policies only affect anon-key/frontend reads).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -60,54 +76,46 @@ COMMENT ON TABLE country_coverage_index IS 'One row per (country, package) pair.
 -- -----------------------------------------------------------------------------
 -- 3. juzgo_selected_plans — David's curation layer: what's actually sold, and
 --    at what price. This is what the Admin Portal's "Sell?" tick writes to.
+--
+--    NOTE: no CHECK constraint here (see header note above — subqueries are not
+--    permitted in CHECK constraints in Postgres; the floor is enforced below by
+--    a BEFORE INSERT/UPDATE trigger instead).
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS juzgo_selected_plans (
   package_id    text PRIMARY KEY REFERENCES airalo_catalog(package_id) ON DELETE CASCADE,
   is_active     boolean NOT NULL DEFAULT false,
   your_price    numeric(10,2) NOT NULL,
   updated_by    text,
-  updated_at    timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT your_price_floor CHECK (
-    your_price >= (SELECT minimum_selling_price FROM airalo_catalog WHERE airalo_catalog.package_id = juzgo_selected_plans.package_id)
-  )
+  updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_selected_plans_is_active ON juzgo_selected_plans (is_active);
 
 COMMENT ON TABLE juzgo_selected_plans IS 'Curated sell list. Storefront queries always join airalo_catalog -> juzgo_selected_plans filtered on is_active = true; airalo_catalog alone is never customer-facing.';
 
--- NOTE on the your_price_floor CHECK constraint above: a CHECK constraint with a
--- subquery is not standard/portable Postgres (subqueries in CHECK are technically
--- disallowed by the SQL standard and unreliable in Postgres in practice — this may
--- fail to apply or fail on insert). If this errors when run, use a BEFORE INSERT/UPDATE
--- trigger instead:
---
--- CREATE OR REPLACE FUNCTION enforce_price_floor() RETURNS trigger AS $$
--- DECLARE floor_price numeric(10,2);
--- BEGIN
---   SELECT minimum_selling_price INTO floor_price FROM airalo_catalog WHERE package_id = NEW.package_id;
---   IF NEW.your_price < floor_price THEN
---     RAISE EXCEPTION 'your_price (%) is below the minimum selling price (%) for package %', NEW.your_price, floor_price, NEW.package_id;
---   END IF;
---   RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql;
---
--- CREATE TRIGGER trg_enforce_price_floor
---   BEFORE INSERT OR UPDATE ON juzgo_selected_plans
---   FOR EACH ROW EXECUTE FUNCTION enforce_price_floor();
---
--- Test both approaches in the Supabase SQL Editor before committing to one —
--- if the CHECK constraint above applies cleanly, prefer it (simpler); otherwise
--- drop it and use the trigger.
+CREATE OR REPLACE FUNCTION enforce_price_floor() RETURNS trigger AS $$
+DECLARE floor_price numeric(10,2);
+BEGIN
+  SELECT minimum_selling_price INTO floor_price FROM airalo_catalog WHERE package_id = NEW.package_id;
+  IF floor_price IS NOT NULL AND NEW.your_price < floor_price THEN
+    RAISE EXCEPTION 'your_price (%) is below the minimum selling price (%) for package %', NEW.your_price, floor_price, NEW.package_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_enforce_price_floor ON juzgo_selected_plans;
+CREATE TRIGGER trg_enforce_price_floor
+  BEFORE INSERT OR UPDATE ON juzgo_selected_plans
+  FOR EACH ROW EXECUTE FUNCTION enforce_price_floor();
 
 -- -----------------------------------------------------------------------------
 -- 4. Extend orders — add Airalo-specific columns.
---    IMPORTANT: column names below assume the existing `orders` table structure
---    documented in CONTEXT.md. Verify actual table name/columns in Supabase
---    before running — this project's orders table may need confirming (the
---    card-payment fulfillment gap noted in CONTEXT.md Session 17 suggests the
---    orders table's real-world usage may not yet match assumptions cleanly).
+--    Confirmed against Server/server.js: `orders` is the real table name, uses
+--    an `id` PK, and none of the six columns below collide with existing ones
+--    (price_sgd, data_amount, package_title, country_name, country_code, status,
+--    payment_method, referral_code, reseller_code, discount_sgd, order_code, etc.
+--    all remain untouched).
 -- -----------------------------------------------------------------------------
 ALTER TABLE orders
   ADD COLUMN IF NOT EXISTS package_id text REFERENCES airalo_catalog(package_id),
@@ -120,19 +128,49 @@ ALTER TABLE orders
 CREATE INDEX IF NOT EXISTS idx_orders_iccid ON orders (iccid) WHERE iccid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_package_id ON orders (package_id) WHERE package_id IS NOT NULL;
 
+-- -----------------------------------------------------------------------------
+-- 5. RLS — public read access.
+--    Matches the exact convention already used for countries/esim_plans
+--    (migrations/juzgo-migration-seed.sql): enable RLS, add an explicit
+--    SELECT-true policy. Without this, an RLS-enabled table with no SELECT
+--    policy returns silently empty results to the anon key, not an error
+--    (see CONTEXT.md's "RLS silent empty" gotcha).
+--
+--    All writes to these three tables happen server-side via server.js, which
+--    uses SUPABASE_SERVICE_ROLE_KEY — service role bypasses RLS entirely, so
+--    these policies only govern frontend (anon key) reads.
+--
+--    juzgo_selected_plans read policy is scoped to is_active = true only,
+--    since inactive/unpublished pricing shouldn't be readable by anon clients
+--    even though the storefront query would filter it anyway (defense in depth).
+-- -----------------------------------------------------------------------------
+ALTER TABLE airalo_catalog ENABLE ROW LEVEL SECURITY;
+ALTER TABLE country_coverage_index ENABLE ROW LEVEL SECURITY;
+ALTER TABLE juzgo_selected_plans ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public read airalo_catalog" ON airalo_catalog;
+DROP POLICY IF EXISTS "Public read country_coverage_index" ON country_coverage_index;
+DROP POLICY IF EXISTS "Public read active selected_plans" ON juzgo_selected_plans;
+
+CREATE POLICY "Public read airalo_catalog" ON airalo_catalog FOR SELECT USING (true);
+CREATE POLICY "Public read country_coverage_index" ON country_coverage_index FOR SELECT USING (true);
+CREATE POLICY "Public read active selected_plans" ON juzgo_selected_plans FOR SELECT USING (is_active = true);
+
 -- =============================================================================
 -- Post-migration checklist:
--- [ ] Confirm the your_price_floor constraint applied (see NOTE above) — test with
---     an intentionally-too-low insert, confirm it's rejected.
--- [ ] Confirm `orders` table name/columns above actually match this project's schema
---     (this migration assumes the table is literally named `orders` — verify in
---     Supabase Table Editor first).
--- [ ] RLS: airalo_catalog and country_coverage_index likely need public SELECT
---     policies (USING (true)) since they're read by the storefront — see CONTEXT.md's
---     "RLS silent empty" gotcha: a table with RLS enabled but no SELECT policy
---     returns empty results, not an error, to the anon key. juzgo_selected_plans
---     likely needs admin-only write, public read (is_active = true rows only).
--- [ ] After running: this migration creates empty tables. Catalog sync job (not
---     part of this migration) is what actually populates airalo_catalog and
---     country_coverage_index from the live Airalo API.
+-- [ ] Run this whole file once in Supabase SQL Editor.
+-- [ ] Confirm the price-floor trigger works: try
+--       INSERT INTO airalo_catalog (package_id, country_region, scope, type, net_price, minimum_selling_price, recommended_retail_price)
+--       VALUES ('test-pkg', 'Testland', 'country', 'sim', 3.00, 5.00, 5.00);
+--       INSERT INTO juzgo_selected_plans (package_id, is_active, your_price) VALUES ('test-pkg', true, 4.00);
+--     — the second insert should be REJECTED (4.00 < 5.00 floor). Then try your_price = 5.50,
+--     confirm it succeeds. Clean up both test rows after:
+--       DELETE FROM juzgo_selected_plans WHERE package_id = 'test-pkg';
+--       DELETE FROM airalo_catalog WHERE package_id = 'test-pkg';
+-- [ ] Confirm RLS: from the frontend (anon key), SELECT * FROM airalo_catalog should work
+--     (empty result set is fine — table's empty until sync runs); a direct anon-key write
+--     attempt should fail.
+-- [ ] After running: this migration creates empty tables. The catalog sync job (not part
+--     of this migration — that's build-order step 3) is what actually populates
+--     airalo_catalog and country_coverage_index from the live Airalo API.
 -- =============================================================================
