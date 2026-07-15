@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import Footer from '../components/Footer';
 import styles from './Admin.module.css';
 
-const TABS = ['Orders', 'Users', 'Wallet', 'Logs', 'Resellers', 'Corporate', 'Sales', 'Analytics'];
+const TABS = ['Orders', 'Users', 'Wallet', 'Logs', 'Resellers', 'Corporate', 'Catalog', 'Sales', 'Analytics'];
 
 /* ─────────────────── helpers ─────────────────── */
 function Spinner() { return <div className={styles.spinner} />; }
@@ -245,6 +245,14 @@ export default function Admin() {
           <div className={styles.tabContent}>
             <h2 className={styles.tabH2}>Corporate Accounts</h2>
             <CorporateManager data={d} />
+          </div>
+        )}
+
+        {/* ── Catalog ── */}
+        {tab === 'Catalog' && (
+          <div className={styles.tabContent}>
+            <h2 className={styles.tabH2}>Catalog &amp; Pricing</h2>
+            <CatalogManager />
           </div>
         )}
 
@@ -584,6 +592,253 @@ function CorporateManager({ data }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Catalog & Pricing manager sub-component ── */
+const SCOPE_FILTERS = [
+  { value: '', label: 'All' },
+  { value: 'country', label: 'Country' },
+  { value: 'region', label: 'Region' },
+  { value: 'global', label: 'Global' },
+];
+const TYPE_FILTERS = [
+  { value: '', label: 'All types' },
+  { value: 'sim', label: 'Sim' },
+  { value: 'topup', label: 'Topup' },
+];
+const PAGE_SIZE = 50;
+
+function CatalogManager() {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [scope, setScope] = useState('');
+  const [type, setType] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [savingId, setSavingId] = useState(null);
+  const [rowErrors, setRowErrors] = useState({});
+  // Draft price text per package_id, so typing doesn't fight server data —
+  // seeded from the existing selection's your_price, or the floor as a
+  // sensible starting point once "Sell?" is first ticked.
+  const [priceDrafts, setPriceDrafts] = useState({});
+
+  const searchDebounce = React.useRef(null);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const fetchCatalog = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const backend = process.env.REACT_APP_BACKEND_URL;
+      const params = new URLSearchParams({ page, limit: PAGE_SIZE });
+      if (scope) params.set('scope', scope);
+      if (type) params.set('type', type);
+      if (search) params.set('search', search);
+
+      const res = await fetch(`${backend}/admin/catalog?${params}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to load catalog.');
+
+      setRows(result.rows);
+      setTotal(result.total);
+      setPriceDrafts((prev) => {
+        const next = { ...prev };
+        result.rows.forEach((r) => {
+          if (next[r.package_id] === undefined) {
+            next[r.package_id] = r.selection?.your_price ?? r.minimum_selling_price_sgd;
+          }
+        });
+        return next;
+      });
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  }, [page, scope, type, search]);
+
+  useEffect(() => { fetchCatalog(); }, [fetchCatalog]);
+
+  function onSearchChange(v) {
+    setSearchInput(v);
+    clearTimeout(searchDebounce.current);
+    searchDebounce.current = setTimeout(() => {
+      setPage(1);
+      setSearch(v.trim());
+    }, 400);
+  }
+
+  function onScopeChange(v) { setScope(v); setPage(1); }
+  function onTypeChange(v) { setType(v); setPage(1); }
+
+  async function saveSelection(row, { is_active, your_price }) {
+    setSavingId(row.package_id);
+    setRowErrors((prev) => ({ ...prev, [row.package_id]: '' }));
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const backend = process.env.REACT_APP_BACKEND_URL;
+      const res = await fetch(`${backend}/admin/catalog/${encodeURIComponent(row.package_id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ is_active, your_price }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Save failed.');
+
+      setRows((prev) => prev.map((r) => (r.package_id === row.package_id ? { ...r, selection: result } : r)));
+    } catch (err) {
+      setRowErrors((prev) => ({ ...prev, [row.package_id]: err.message }));
+    }
+    setSavingId(null);
+  }
+
+  function toggleSell(row) {
+    const currentlyActive = row.selection?.is_active || false;
+    const price = parseFloat(priceDrafts[row.package_id]);
+    const safePrice = Number.isFinite(price) ? price : row.minimum_selling_price_sgd;
+    saveSelection(row, { is_active: !currentlyActive, your_price: safePrice });
+  }
+
+  function onPriceBlur(row) {
+    const draft = parseFloat(priceDrafts[row.package_id]);
+    if (!Number.isFinite(draft)) return;
+    const currentSaved = row.selection?.your_price;
+    if (currentSaved !== undefined && draft === currentSaved) return; // unchanged
+    saveSelection(row, { is_active: row.selection?.is_active || false, your_price: draft });
+  }
+
+  return (
+    <div>
+      {/* Filters */}
+      <div className={styles.catalogFilterBar}>
+        <div className={styles.filterPillGroup}>
+          {SCOPE_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              className={`${styles.filterPill} ${scope === f.value ? styles.filterPillActive : ''}`}
+              onClick={() => onScopeChange(f.value)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className={styles.filterPillGroup}>
+          {TYPE_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              className={`${styles.filterPill} ${type === f.value ? styles.filterPillActive : ''}`}
+              onClick={() => onTypeChange(f.value)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <input
+          type="text"
+          placeholder="Search country, region, or package id…"
+          value={searchInput}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className={styles.catalogSearchInput}
+        />
+      </div>
+
+      {error && <div className={styles.lookupErr} style={{ marginBottom: 14 }}>{error}</div>}
+
+      <div className={styles.catalogSummaryRow}>
+        {total.toLocaleString()} package{total === 1 ? '' : 's'} match{loading ? ' — loading…' : ''}
+      </div>
+
+      {/* Table */}
+      <div className={styles.table}>
+        <div className={`${styles.tableRow} ${styles.tableHead} ${styles.catalogRow}`}>
+          <span>Sell?</span>
+          <span>Country/Region</span>
+          <span>Package Id</span>
+          <span>Type</span>
+          <span>Data</span>
+          <span>Validity</span>
+          <span>Net (SGD)</span>
+          <span>Floor (SGD)</span>
+          <span>Your Price (SGD)</span>
+          <span>Margin</span>
+        </div>
+
+        {!loading && rows.length === 0 ? (
+          <EmptyState icon="📶" text="No packages match these filters." />
+        ) : (
+          rows.map((r) => {
+            const isActive = r.selection?.is_active || false;
+            const draftPrice = priceDrafts[r.package_id] ?? '';
+            const priceNum = parseFloat(draftPrice);
+            const margin = Number.isFinite(priceNum) ? priceNum - r.net_price_sgd : null;
+            const marginPct = margin !== null && priceNum > 0 ? (margin / priceNum) * 100 : null;
+            const rowErr = rowErrors[r.package_id];
+
+            return (
+              <div key={r.package_id} className={`${styles.tableRow} ${styles.catalogRow}`}>
+                <span>
+                  <input
+                    type="checkbox"
+                    checked={isActive}
+                    disabled={savingId === r.package_id}
+                    onChange={() => toggleSell(r)}
+                    className={styles.catalogCheckbox}
+                  />
+                </span>
+                <span>{r.country_region}</span>
+                <span className={styles.mono}>{r.package_id}</span>
+                <span className={styles.mono}>{r.type}</span>
+                <span>{r.data_amount || '—'}</span>
+                <span>{r.validity_days ? `${r.validity_days}d` : '—'}</span>
+                <span>{r.net_price_sgd != null ? r.net_price_sgd.toFixed(2) : '—'}</span>
+                <span>{r.minimum_selling_price_sgd != null ? r.minimum_selling_price_sgd.toFixed(2) : '—'}</span>
+                <span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={draftPrice}
+                    disabled={savingId === r.package_id}
+                    onChange={(e) => setPriceDrafts((prev) => ({ ...prev, [r.package_id]: e.target.value }))}
+                    onBlur={() => onPriceBlur(r)}
+                    className={styles.catalogPriceInput}
+                  />
+                  {rowErr && <div className={styles.catalogRowErr}>{rowErr}</div>}
+                </span>
+                <span className={margin === null ? '' : margin >= 0 ? styles.amtPos : styles.amtNeg}>
+                  {margin === null ? '—' : `${margin.toFixed(2)} (${marginPct.toFixed(0)}%)`}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Pagination */}
+      <div className={styles.catalogPagination}>
+        <button
+          className={styles.btnLookup}
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={page <= 1 || loading}
+        >
+          ← Prev
+        </button>
+        <span className={styles.mono}>Page {page} of {totalPages}</span>
+        <button
+          className={styles.btnLookup}
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          disabled={page >= totalPages || loading}
+        >
+          Next →
+        </button>
+      </div>
     </div>
   );
 }

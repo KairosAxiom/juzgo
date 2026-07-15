@@ -1075,6 +1075,100 @@ async function resolvePromoCode(rawCode) {
   };
 }
 
+// GET /admin/catalog — paginated, filterable Airalo catalog for the Catalog &
+// Pricing tab. Joins airalo_catalog -> juzgo_selected_plans (David's curation
+// layer) so the table can show current Sell?/Your Price state alongside the
+// raw catalog data. Reference: juzgo-airalo-catalog-admin-spec.md §5.
+//
+// Query params:
+//   page     (default 1)
+//   limit    (default 50, capped at 200 — this table has ~1,990+ rows, never
+//             ship the whole thing to the client at once)
+//   scope    'country' | 'region' | 'global' | omit for all
+//   type     'sim' | 'topup' | omit for both
+//   search   matches against country_region or package_id (case-insensitive)
+app.get('/admin/catalog', requireAdmin, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    let query = supabase
+      .from('airalo_catalog')
+      .select('*, juzgo_selected_plans(is_active, your_price, updated_by, updated_at)', { count: 'exact' })
+      .order('country_region', { ascending: true })
+      .order('package_id', { ascending: true })
+      .range(from, to);
+
+    if (req.query.scope) query = query.eq('scope', req.query.scope);
+    if (req.query.type) query = query.eq('type', req.query.type);
+    if (req.query.search) {
+      const s = req.query.search.trim();
+      query = query.or(`country_region.ilike.%${s}%,package_id.ilike.%${s}%`);
+    }
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+
+    // Supabase returns the embedded 1:1 relation as an array of 0 or 1 items
+    // (PostgREST doesn't always collapse it even when the FK is also the PK) —
+    // flatten it here so the frontend deals with a plain object or null.
+    const rows = (data || []).map((row) => {
+      const sel = Array.isArray(row.juzgo_selected_plans)
+        ? row.juzgo_selected_plans[0] || null
+        : row.juzgo_selected_plans || null;
+      return { ...row, juzgo_selected_plans: undefined, selection: sel };
+    });
+
+    res.json({ rows, total: count || 0, page, limit });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /admin/catalog/:package_id — upsert David's curation choice (Sell? tick
+// + Your Price) for one package. The database's your_price_floor trigger
+// (see migrations/airalo-integration-migration.sql) is the actual enforcement
+// — this just catches that trigger's raised exception and returns a clean
+// 400 instead of a raw 500, so the Admin Portal can show a friendly error.
+app.put('/admin/catalog/:package_id', requireAdmin, async (req, res) => {
+  try {
+    const { is_active, your_price } = req.body;
+    if (typeof your_price !== 'number' || Number.isNaN(your_price)) {
+      return res.status(400).json({ error: 'your_price must be a number' });
+    }
+
+    const { data, error } = await supabase
+      .from('juzgo_selected_plans')
+      .upsert(
+        {
+          package_id: req.params.package_id,
+          is_active: !!is_active,
+          your_price,
+          updated_by: req.adminUser.email,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'package_id' }
+      )
+      .select()
+      .single();
+
+    if (error) {
+      // Postgres trigger raises a plain EXCEPTION (SQLSTATE P0001) when
+      // your_price is below minimum_selling_price_sgd — surface that as a
+      // 400 with its own message rather than a generic 500.
+      if (error.code === 'P0001' || /below the minimum selling price/i.test(error.message)) {
+        return res.status(400).json({ error: error.message });
+      }
+      throw error;
+    }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/reseller/validate', async (req, res) => {
   try {
     const { code } = req.body;
