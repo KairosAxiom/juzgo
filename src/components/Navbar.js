@@ -1,18 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useLang } from '../lib/i18n';
 import LanguageToggle from './LanguageToggle';
-import GlobeLogo from './GlobeLogo';
 import styles from './Navbar.module.css';
 
 export default function Navbar() {
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [isCorpUser, setIsCorpUser] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [corpDropdownOpen, setCorpDropdownOpen] = useState(false);
-  const corpDropdownRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
   const { lang, t } = useLang();
@@ -20,47 +16,19 @@ export default function Navbar() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        checkAdmin(session.user.email);
-        checkCorpUser(session.user.id);
-      }
+      if (session?.user) checkAdmin(session.user.email);
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        checkAdmin(session.user.email);
-        checkCorpUser(session.user.id);
-      } else {
-        setIsAdmin(false);
-        setIsCorpUser(false);
-      }
+      if (session?.user) checkAdmin(session.user.email);
+      else setIsAdmin(false);
     });
     return () => listener.subscription.unsubscribe();
-  }, []);
-
-  // Close the Corporate dropdown on outside click
-  useEffect(() => {
-    function handleClickOutside(e) {
-      if (corpDropdownRef.current && !corpDropdownRef.current.contains(e.target)) {
-        setCorpDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   async function checkAdmin(email) {
     const adminEmail = process.env.REACT_APP_ADMIN_EMAIL;
     setIsAdmin(email === adminEmail);
-  }
-
-  async function checkCorpUser(userId) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('is_corporate')
-      .eq('id', userId)
-      .maybeSingle();
-    setIsCorpUser(!!data?.is_corporate);
   }
 
   async function handleLogout() {
@@ -69,7 +37,6 @@ export default function Navbar() {
   }
 
   const isActive = (path) => location.pathname === path;
-  const isCorpPath = location.pathname.startsWith('/corporate');
 
   return (
     <nav className={styles.nav}>
@@ -77,13 +44,41 @@ export default function Navbar() {
         {/* Logo */}
         <Link to="/" className={styles.logo} onClick={() => setMenuOpen(false)}>
           <div className={styles.globeWrap}>
-            <GlobeLogo size={66} />
+            <svg className={styles.globeSvg} width="44" height="44" viewBox="0 0 44 44">
+              <defs>
+                <clipPath id="globeClip">
+                  <circle cx="22" cy="22" r="19" />
+                </clipPath>
+                <radialGradient id="oceanGrad" cx="38%" cy="35%" r="65%">
+                  <stop offset="0%" stopColor="#5BA4E5" />
+                  <stop offset="100%" stopColor="#1A5FAB" />
+                </radialGradient>
+              </defs>
+              <circle cx="22" cy="22" r="19" fill="url(#oceanGrad)" />
+              <g clipPath="url(#globeClip)">
+                <ellipse cx="22" cy="22" rx="6" ry="19" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.9" className={styles.globeLon} />
+                <ellipse cx="22" cy="22" rx="13" ry="19" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.9" className={styles.globeLon2} />
+                <ellipse cx="22" cy="15" rx="17" ry="4.5" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
+                <ellipse cx="22" cy="22" rx="19" ry="5.5" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
+                <ellipse cx="22" cy="29" rx="17" ry="4.5" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
+              </g>
+              <ellipse cx="16" cy="14" rx="7" ry="5" fill="rgba(255,255,255,0.15)" />
+              <circle cx="22" cy="22" r="19" fill="none" stroke="rgba(42,111,219,0.5)" strokeWidth="1.2" />
+            </svg>
+
+            {/* Orbiting green dot */}
+            <div className={styles.globeOrbit}>
+              <div className={styles.globeDot} />
+            </div>
           </div>
           <span className={styles.logoText}>Juzgo</span>
         </Link>
 
         {/* Desktop links */}
         <div className={styles.links}>
+          <Link to="/" className={`${styles.link} ${isActive('/') ? styles.linkActive : ''}`}>
+            Home
+          </Link>
           <Link to="/itinerary" className={`${styles.link} ${isActive('/itinerary') ? styles.linkActive : ''}`}>
             {t('nav_itinerary', lang)}
           </Link>
@@ -105,11 +100,6 @@ export default function Navbar() {
               <Link to="/dashboard" className={`${styles.link} ${isActive('/dashboard') ? styles.linkActive : ''}`}>
                 {t('nav_dashboard', lang)}
               </Link>
-              {isCorpUser && (
-                <Link to="/corporate/dashboard" className={`${styles.link} ${isActive('/corporate/dashboard') ? styles.linkActive : ''}`}>
-                  🏢 Corp Portal
-                </Link>
-              )}
               {isAdmin && (
                 <Link to="/admin" className={`${styles.link} ${styles.linkAdmin} ${isActive('/admin') ? styles.linkActive : ''}`}>
                   ⚙️ Admin
@@ -121,39 +111,6 @@ export default function Navbar() {
             </>
           ) : (
             <>
-              {/* Corporate dropdown — Login / Register for business accounts.
-                  NOTE: generic wiring only (Session 20). Does NOT yet reflect
-                  the org unification / tour agency model — see
-                  ORG-UNIFICATION-SPEC.md in Project Knowledge. Revisit once
-                  that's built (e.g. split Corporate vs Tour Agency here). */}
-              <div className={styles.corpDropdownWrap} ref={corpDropdownRef}>
-                <button
-                  className={`${styles.link} ${styles.corpDropdownTrigger} ${isCorpPath ? styles.linkActive : ''}`}
-                  onClick={() => setCorpDropdownOpen((o) => !o)}
-                  type="button"
-                >
-                  Corporate <span className={styles.corpCaret}>{corpDropdownOpen ? '▴' : '▾'}</span>
-                </button>
-                {corpDropdownOpen && (
-                  <div className={styles.corpDropdownMenu}>
-                    <Link
-                      to="/corporate/register"
-                      className={styles.corpDropdownItem}
-                      onClick={() => setCorpDropdownOpen(false)}
-                    >
-                      Register
-                    </Link>
-                    <Link
-                      to="/login"
-                      className={styles.corpDropdownItem}
-                      onClick={() => setCorpDropdownOpen(false)}
-                    >
-                      Login
-                    </Link>
-                  </div>
-                )}
-              </div>
-
               <Link to="/register" className={styles.btnPrimary}>
                 {t('nav_register', lang)}
               </Link>
@@ -181,6 +138,7 @@ export default function Navbar() {
       {/* Mobile drawer */}
       {menuOpen && (
         <div className={styles.drawer}>
+          <Link to="/" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>Home</Link>
           <Link to="/itinerary" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_itinerary', lang)}</Link>
           <Link to="/plans" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_plans', lang)}</Link>
           <Link to="/terms" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>Terms &amp; Conditions</Link>
@@ -189,9 +147,6 @@ export default function Navbar() {
               <Link to="/dashboard" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_dashboard', lang)}</Link>
               <Link to="/purchases" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_purchases', lang)}</Link>
               <Link to="/saved-itineraries" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>Saved Itinerary</Link>
-              {isCorpUser && (
-                <Link to="/corporate/dashboard" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>🏢 Corp Portal</Link>
-              )}
               {isAdmin && <Link to="/admin" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>⚙️ Admin</Link>}
               <button onClick={() => { handleLogout(); setMenuOpen(false); }} className={styles.drawerBtn}>{t('nav_logout', lang)}</button>
             </>
@@ -199,11 +154,6 @@ export default function Navbar() {
             <>
               <Link to="/register" className={`${styles.drawerLink} ${styles.drawerLinkGreen}`} onClick={() => setMenuOpen(false)}>{t('nav_register', lang)}</Link>
               <Link to="/login" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>{t('nav_login', lang)}</Link>
-              <div className={styles.drawerCorpSection}>
-                <div className={styles.drawerCorpLabel}>Corporate</div>
-                <Link to="/corporate/register" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>Register</Link>
-                <Link to="/login" className={styles.drawerLink} onClick={() => setMenuOpen(false)}>Login</Link>
-              </div>
             </>
           )}
           <div className={styles.drawerLang}><LanguageToggle /></div>
