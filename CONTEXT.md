@@ -1,18 +1,13 @@
 # Juzgo — Living Project Context
-Last updated: July 15, 2026 (Session 23)
-Latest commit: 3be1a874 — "fix: remove eslint-disable comment for a rule not registered in this project, which broke the CI build" (confirmed live in Cloudflare Pages Production, build succeeded)
+Last updated: July 15, 2026 (Session 24)
+Latest commit: 5ca974a5 — "feat: Request a Plan — include individual countries, not just regions" (pushed, Cloudflare Pages + Render redeploying)
 
 ---
 
 ## ⚠️ Pre-Launch Checklist (do NOT go live without these)
 - **Real eSIM fulfillment — confirmed 100% mocked (Session 23).** Pulled the actual live Cloudflare Worker (`claude-proxy`) code this session and confirmed: `/airalo/orders` operates entirely against a hardcoded `MOCK_PACKAGES` object (its own disconnected 45-destination mini-catalog, unrelated to the real `airalo_catalog` table built in Session 23), generates a fake ICCID (`generateMockIccid()`), and a fake QR code pointing at a public `qrserver.com` generator encoding a sandbox placeholder string (`generateMockQrCode`/`generateMockQrUrl`). Zero calls to Airalo's real API exist anywhere in the worker (confirmed via in-editor search for `airalo.com/v2/orders` and `partners-api.airalo.com` — both "No results"). **No customer has ever received, or currently could receive, a real installable eSIM.** This is THE single remaining pre-launch blocker — bigger than previously understood, since earlier notes assumed this was mostly done pending registration; registration has been done since Session 22, but the actual order-submission code was never wired to the real API. Next session on this should: (1) add real `AIRALO_CLIENT_ID`/`AIRALO_CLIENT_SECRET` as Worker secrets, (2) replace the mock order logic in `/airalo/orders` with a real `POST` to Airalo's order-submission endpoint (see `partners-api.airalo.com` docs — same base URL for sandbox/production), (3) have `Server/server.js`'s `/order/create`, `/order/wallet-pay`, `/order/corp-wallet-pay` actually call this worker endpoint after writing the order row, to populate real `iccid`/`qr_url` (currently nothing sets these), (4) send the real QR in the follow-up email that's currently just a placeholder promise ("Your eSIM QR code will follow in a separate email shortly"). Only once this is done does the Check/Verify button (admin spec §6.3, not yet built) become meaningful — no real ICCID exists to check yet.
 - ~~Airalo catalog integration (Sessions 22–23)~~ — **DONE.** Full workstream complete: Supabase migration (4 tables + RLS + price-floor trigger), sandbox verification, real catalog sync job (~1,990 sandbox packages), Admin "Catalog & Pricing" tab (curate/price with live floor enforcement), and the storefront (`Plans.js` search/browse/country-modal, `Checkout.js`, and all 3 payment endpoints rewired off the old dummy `esim_plans` table onto the real catalog). Live-tested end to end: David activated a plan in Admin, `staff1@juzgo.world` purchased it on the live storefront, order recorded correctly in Admin → Orders. See Session 23 log for full detail, decisions made, and bugs found/fixed along the way. **Caveat:** this only covers catalog/pricing/browsing/checkout-record-keeping — it does NOT include real eSIM fulfillment (see item above), which is a separate, still-fully-mocked piece.
-- **New feature idea, spec'd but not built (Session 23): "Your Request" AI search box.** Customer-facing free-text box (e.g. on `/plans`) for when nothing in the curated catalog fits — "I need a lot of data for 2 weeks in Vietnam and Cambodia." Reuses the existing `claude-proxy` Worker pattern (same shape as the itinerary AI planner: free text → Claude → structured helpful response). Design decided this session:
-  - Searches the **full** `airalo_catalog` (not just `is_active = true` curated packages) — deliberately broader than the normal storefront.
-  - **This is a second, parallel purchase channel that intentionally bypasses the normal "Sell?" curation gate.** A package found this way can be shown to the customer complete with a real price and be directly purchasable, WITHOUT David having activated it via the Admin Catalog & Pricing tab first. Confirmed explicitly by David — not an oversight.
-  - Auto-price default for anything never priced before: the floor (`minimum_selling_price_sgd`) — same default the Admin Portal already uses the moment "Sell?" is first ticked, just triggered by a customer's search instead of David's click.
-  - Real implementation will need its own checkout path (or a variant of `getActivePlanForCheckout` in `server.js` that doesn't require `juzgo_selected_plans.is_active = true`) since the existing checkout helper deliberately hard-blocks anything not curated — that guard is correct for the normal storefront and must NOT be loosened globally, only bypassed specifically for this flow.
-  - Deliberately not built this session — flagged as deserving its own dedicated session given it's genuinely new payment-adjacent plumbing, not a small add-on.
+- ~~New feature: "Request a Plan" (Special Request channel)~~ — **DONE Session 24**, live-tested end to end by David. Built differently from the original Session 23 "Your Request" sketch: structured tick-box search (Data amount / Duration / Country-Region, all pulled live from `airalo_catalog` — nothing hardcoded) instead of free-text + Claude matching. Matching is a plain SQL filter, no `claude-proxy` call needed. Second purchase channel, deliberately bypasses the `juzgo_selected_plans.is_active` curation gate as originally agreed — but does NOT auto-promote a purchased package into the normal storefront (that stays manual; a future purchase-count threshold could auto-tag "Popular Request," not built yet). New `orders.order_source` column tags which channel an order came from; new `special_request_log` table (RLS enabled, no policies — service-role only) logs every search, matched or not, reviewable in a new Admin "Special Requests" tab. Country/Region tick list includes individual countries, not just named region/global bundles — deliberately includes a country even if it's already active under a different config, since the gap being surfaced is per-combination, not per-country. See Session 24 log for full build detail.
 - **Open decision (Session 21, still unresolved):** whether to build the full `organizations`/`org_links` schema from `ORG-UNIFICATION-SPEC.md` (tour agency support) now, or keep the current corporate-only domain-lock and revisit tour agencies once there's an actual prospect. See Session 21 log Part 4 for the reasoning — leaning toward deferring, not yet finalized.
 - ~~Build the Admin Corporate approval tab.~~ — **DONE + fully live-tested Session 21**, including Suspend/Reactivate (David tested directly). Registration → pending → Approve → Suspend → Reactivate, all confirmed working end to end.
 - ~~Password strength enforcement on registration forms~~ — **DONE Session 21.** `Register.js` now also requires at least one letter and one number in addition to the existing ≥8 char minimum.
@@ -38,7 +33,8 @@ Latest commit: 3be1a874 — "fix: remove eslint-disable comment for a rule not r
 - Project: esimconnect (emsovpcmdnuxrhbyvnvb.supabase.co)
 - Org: Kairos Axiom (otrgxsjnnxogpcaydpni)
 - Account email: dlimyk@gmail.com
-- Tables: airalo_catalog, corp_invites, corporates, countries, country_coverage_index, esim_plans, esims, juzgo_selected_plans, orders, profiles, push_subscriptions, resellers, saved_itineraries, usage_logs, users, voip_calls, waitlist, wallet_topups
+- Tables: airalo_catalog, corp_invites, corporates, countries, country_coverage_index, esim_plans, esims, juzgo_selected_plans, orders, profiles, push_subscriptions, resellers, saved_itineraries, special_request_log, usage_logs, users, voip_calls, waitlist, wallet_topups
+- New Session 24: `special_request_log` (RLS enabled, zero policies — service-role only via `server.js`; logs every `/request-a-plan` search, matched or not, for Admin review). `orders` extended with `order_source` (`'catalog'` default or `'special_request'`).
 - New Session 23: `airalo_catalog` (system-owned, refreshed by `Server/jobs/airaloCatalogSync.js`), `country_coverage_index` (reverse country→package lookup, rebuilt every sync), `juzgo_selected_plans` (David's curation layer — Admin "Sell?"/price). All three have public SELECT RLS policies (service role bypasses for writes). `orders` extended with `package_id`, `iccid`, `net_price_at_sale`, `your_price_at_sale`, `esim_status_last_checked`, `esim_status_checked_at`. `esim_plans`/`countries` (the old dummy catalog) are now unused by any live code path but not dropped — no harm leaving them.
 - RLS: profiles, wallet_topups, voip_calls, push_subscriptions, resellers, saved_itineraries all have RLS enabled
 - saved_itineraries RLS: INSERT + SELECT + DELETE policies for authenticated users (added July 2026)
@@ -1014,3 +1010,130 @@ given it's genuinely new payment-adjacent plumbing.
 Both are substantial, payment-adjacent, and deserve fresh focus rather than being
 tacked onto the end of a long session — that's exactly why neither was started tonight
 despite being readily discussable.
+
+---
+
+## Session 24 — "Request a Plan" (Special Request channel), built end-to-end
+
+Picked direction 2 from Session 23's close, but redesigned before building. David
+wanted to lock in exact behavior first — worth reading as a mini case study in how much
+a spec can change between "idea captured" and "ready to build":
+
+**What changed from the Session 23 sketch, point by point:**
+1. **Search scope** — narrower than "full catalog": only `airalo_catalog` rows NOT
+   currently active in `juzgo_selected_plans`. Simpler than it sounded — same table the
+   storefront already excludes, just inverted.
+2. **Pricing** — no new logic needed. Cost/price/margin already exist on every
+   `airalo_catalog` row; Special Request purchases charge `minimum_selling_price_sgd`
+   directly, same floor Admin's Catalog tab already uses.
+3. **Promotion** — purchasing via this channel does NOT auto-activate a package into
+   the normal storefront. Stays manual for now; David floated a future rule (5+
+   purchases of the same `package_id` → auto-tag "Popular Request" + `is_active = true`)
+   but explicitly deferred building it — orders are trackable by `package_id` so the
+   hook exists without a future schema change.
+4. **Order tagging** — new `orders.order_source` column (`'catalog'` / `'special_request'`).
+5. **Interaction model — the biggest simplification.** Session 23 imagined free-text →
+   Claude interpretation. David redesigned it as structured tick-boxes instead: Data
+   amount / Duration / Country-Region, all populated dynamically from what's actually
+   sitting inactive in the catalog. This meant matching became a plain SQL filter, not
+   an AI call — cheaper, faster, fully deterministic. Up to 3 results shown.
+6. **Failure mode** — no match → apologetic message + logged to a new
+   `special_request_log` table (not just user-facing copy) for David to review and
+   follow up on manually via a new Admin tab.
+7. **Checkout — also simplified from the original plan.** No separate payment path at
+   all; reuses the exact same `/order/create`, `/order/wallet-pay`,
+   `/order/corp-wallet-pay` endpoints as a normal purchase. The only change: these three
+   endpoints now accept `orderSource: 'special_request'`, which routes through a new
+   `getSpecialRequestPlanForCheckout()` helper instead of the normal
+   `getActivePlanForCheckout()` — looks the package up directly in `airalo_catalog` with
+   NO `is_active` requirement, priced at the catalog floor. Everything else about
+   checkout (Stripe, wallet, corp-wallet, referral/promo handling) is untouched.
+
+**Built, in order:**
+- `migrations/session24-special-request.sql` — `orders.order_source` +
+  `special_request_log` table. Run directly in Supabase SQL Editor by David; Supabase's
+  linter flagged the new table for missing RLS (correct catch — it holds
+  `customer_email`), enabled RLS with zero policies (service-role-only access via
+  `server.js`, which bypasses RLS regardless). Confirmed post-migration via a combined
+  `SELECT` returning both the new column's existence and the new table's row count.
+- `Server/server.js` — `getSpecialRequestPlanForCheckout()`, a `resolvePlanForCheckout()`
+  dispatcher used by all three order endpoints, `GET /special-request/options` (dynamic
+  tick values), `POST /special-request/match` (structured filter + logging), and
+  `GET /admin/special-requests` (Admin tab data source).
+- `src/pages/RequestAPlan.js` + `.module.css` — new `/request-a-plan` page.
+- `src/App.js` — route registration.
+- `src/pages/Checkout.js` — passes `orderSource`/`specialRequestLogId` through on all
+  three payment calls (defaults to `'catalog'`, fully backward-compatible).
+- `src/pages/Admin.js` + `.module.css` — new "Special Requests" tab (`SpecialRequestsManager`,
+  self-fetching component, same pattern as the existing `CatalogManager`), following the
+  established `.table .customRowClass` CSS-specificity override so the dense table layout
+  doesn't collapse under the generic `.tabContent [class*="tableRow"]` rule (a gotcha
+  documented from a previous session's Catalog tab work).
+- `src/pages/Plans.js` + `.module.css` — discovery entry points added, then iterated on
+  after David flagged the first placement was too easy to miss.
+
+**Discoverability iteration (worth noting the back-and-forth):** first pass put a
+"Request a Plan" link only below all search results, on the empty-search state and a
+persistent footer note. David caught this live — the persistent link only showed up
+after scrolling past all 52 loaded results, nowhere near visible on page load. Moved it
+into the filter bar itself, next to the search input, as a small pill: "Can't find a
+plan that suits you? Request a Plan →" — visible immediately, no scrolling. Removed the
+now-redundant footer version; kept the empty-search-state link since that's still a
+legitimate distinct moment to surface it.
+
+**Country/Region tick-list gap, also caught live by David:** first version only offered
+named region/global bundles (Asia, Discover Global, etc.) as tick options, deliberately
+excluding individual countries to keep the list short. David's catch: a country can
+already be active for ONE configuration (e.g. Japan at 5GB/7Days) while a DIFFERENT
+configuration for that same country (e.g. 20GB/30Days) sits inactive — and a customer
+wanting that second configuration would have no way to request it, since the country
+wasn't in the tick list at all. Fixed by broadening the options query to include any
+`country_region` (country or named region) with at least one inactive package,
+regardless of whether other packages for that same country/region are already active.
+The underlying match logic in `POST /special-request/match` didn't need to change — it
+already excluded by exact `package_id`, not by country, so "same country, different
+config" was already matched correctly once the option was visible to select. Added a
+filter-as-you-type box (appears once the list exceeds 8 options) and a small
+region/global tag on non-country pills so the now-longer list stays usable, plus a
+one-line hint clarifying that a country appearing here doesn't mean nothing is offered
+for it — just that this specific combination isn't.
+
+**Live-tested by David, working end to end:** migration run and confirmed via SQL,
+`/plans` glitch investigated along the way (searching "Japan" under the Country filter
+returned nothing while Region/Global found it — turned out to be a genuine curation gap,
+not a bug: no active standalone Japan package existed yet, confirmed via Admin Catalog).
+File-delivery mishap caught by verification discipline: an early `server.js` paste
+silently failed to overwrite the old file (86,513 bytes / 0 grep matches for the new
+code instead of the expected ~95.7 KB / 15+14 matches) — caught before committing
+because the `ls -la` / `grep -c` / `git status` verification step is now routine, not
+skipped even for what looked like a routine re-download.
+
+**Deployed across 3 commits:**
+- `89ccd12c` — the core feature (backend + frontend + Admin tab + migration)
+- `924ff843` — discoverability fix (CTA moved to filter bar)
+- `5ca974a5` — Country/Region tick-list broadened to include individual countries
+
+**Still open, not done this session:**
+- End-to-end purchase smoke test (search → order → confirm `order_source` tag in
+  Admin → Orders and "Ordered" status in Admin → Special Requests) — files are deployed
+  and verified working via code review + syntax checks, but a real test purchase through
+  this specific channel hadn't been completed as of end of session.
+- Admin → Orders tab doesn't currently surface `order_source` as a visible column —
+  the data's there (and the Special Requests tab shows it via `order_id`), but if David
+  wants to eyeball "was this a special request?" directly from the Orders list, that's a
+  small follow-up.
+- Auto-promotion threshold rule (N+ purchases → auto-tag "Popular Request") — explicitly
+  deferred, not built. Purchases are trackable by `package_id` so this can be added
+  without a schema change whenever there's real request volume to look at.
+- Real eSIM fulfillment (see Pre-Launch Checklist at top) — still THE pre-launch
+  blocker, untouched this session. Every order placed through Request a Plan, same as
+  every normal-channel order, currently produces a mock ICCID/QR, not a real one.
+
+**Next session should pick ONE of two directions:**
+1. Finish validating Request a Plan — run the actual end-to-end purchase test, confirm
+   tagging in both Admin tabs, decide whether `order_source` needs surfacing in the
+   Orders tab UI, close this out fully.
+2. Real eSIM fulfillment — still the single biggest pre-launch blocker, unchanged from
+   Session 23's finding. Every purchase through every channel is currently a fake
+   eSIM.
+Both remain substantial enough to deserve dedicated focus rather than being squeezed in.
