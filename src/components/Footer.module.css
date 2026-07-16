@@ -26,7 +26,7 @@
 .logo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   margin-bottom: 16px;
 }
 
@@ -37,6 +37,7 @@
   letter-spacing: -.03em;
   color: #2A6FDB;
   line-height: 1;
+  margin-left: -4px;
 }
 
 .tagline {
