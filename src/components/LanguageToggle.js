@@ -31,7 +31,11 @@ export default function LanguageToggle() {
         onClick={() => setOpen((o) => !o)}
         aria-label="Select language"
       >
-        <span className={styles.globe}>🌐</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <circle cx="12" cy="12" r="9.5" />
+            <ellipse cx="12" cy="12" rx="4" ry="9.5" />
+            <line x1="2.5" y1="12" x2="21.5" y2="12" />
+          </svg>
         <span className={styles.label}>{current.label}</span>
         <span className={`${styles.caret} ${open ? styles.caretOpen : ''}`}>▾</span>
       </button>

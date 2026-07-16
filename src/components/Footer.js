@@ -1,8 +1,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useLang } from '../lib/i18n';
-import GlobeLogo from './GlobeLogo';
 import styles from './Footer.module.css';
+import GlobeLogo from './GlobeLogo';
 
 export default function Footer() {
   const { lang, t } = useLang();
