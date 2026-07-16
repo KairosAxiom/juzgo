@@ -33,7 +33,7 @@ const ITIN_POINTS = [
 const AFFILIATES = [
   { name: 'Tiqets',      url: 'https://www.tiqets.com' },
   { name: 'Booking.com', url: 'https://www.booking.com' },
-  { name: 'Klook',       url: 'https://www.klook.com' },
+  { name: 'Klook',       url: 'https://www.klook.com/affiliate/?aff_adid=127608' },
   { name: 'Expedia',     url: 'https://www.expedia.com' },
 ];
 
