@@ -18,34 +18,11 @@
 
     <title>Juzgo</title>
 
-    <!-- Twemoji: renders flag/emoji glyphs consistently across all platforms,
-         since Windows desktop browsers often lack native flag emoji fonts -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/twemoji.min.js" crossorigin="anonymous"></script>
-    <style>
-      img.emoji {
-        height: 1em;
-        width: 1em;
-        margin: 0 .05em 0 .1em;
-        vertical-align: -0.1em;
-        display: inline-block;
-      }
-    </style>
+    <!-- Note: emoji flags render natively on mobile; Windows desktop may show country codes instead of flag images - acceptable tradeoff -->
+
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
-    <script>
-      // Re-parse emoji into Twemoji images whenever the DOM changes (React re-renders)
-      function applyTwemoji() {
-        if (window.twemoji) {
-          window.twemoji.parse(document.body, { folder: 'svg', ext: '.svg' });
-        }
-      }
-      window.addEventListener('load', () => {
-        applyTwemoji();
-        const observer = new MutationObserver(() => applyTwemoji());
-        observer.observe(document.getElementById('root'), { childList: true, subtree: true, characterData: true });
-      });
-    </script>
   </body>
 </html>
