@@ -53,11 +53,11 @@ export default function Home() {
               No SIM swaps, no roaming-bill surprises.
             </p>
             <div className={styles.heroCtas}>
-              <button className={styles.btnPrimary} onClick={() => navigate('/plans')}>
-                Browse plans →
-              </button>
               <button className={styles.btnOutline} onClick={() => navigate('/itinerary')}>
                 Plan my trip
+              </button>
+              <button className={styles.btnPrimary} onClick={() => navigate('/plans')}>
+                Browse plans →
               </button>
             </div>
             <div className={styles.stats}>

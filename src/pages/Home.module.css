@@ -108,6 +108,15 @@
   margin-bottom: 44px;
 }
 
+/* Equal-width hero CTAs */
+.heroCtas .btnPrimary,
+.heroCtas .btnOutline {
+  flex: 1;
+  min-width: 160px;
+  justify-content: center;
+  text-align: center;
+}
+
 /* Stats */
 .stats {
   display: flex;
