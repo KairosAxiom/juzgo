@@ -1,15 +1,1 @@
-/corporate/* /index.html 200
-/dashboard /index.html 200
-/admin /index.html 200
-/wallet /index.html 200
-/purchases /index.html 200
-/checkout /index.html 200
-/itinerary /index.html 200
-/plans /index.html 200
-/login /index.html 200
-/register /index.html 200
-/find-order /index.html 200
-/saved-itineraries /index.html 200
-/terms /index.html 200
-/login-success /index.html 200
-/order-confirmation /index.html 200
+/* /index.html 200
