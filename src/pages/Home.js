@@ -30,7 +30,12 @@ const ITIN_POINTS = [
   'A day-by-day plan tuned to your pace, budget and interests.',
 ];
 
-const AFFILIATES = ['Tiqets', 'Booking.com', 'Klook', 'Expedia'];
+const AFFILIATES = [
+  { name: 'Tiqets',      url: 'https://www.tiqets.com' },
+  { name: 'Booking.com', url: 'https://www.booking.com' },
+  { name: 'Klook',       url: 'https://www.klook.com' },
+  { name: 'Expedia',     url: 'https://www.expedia.com' },
+];
 
 export default function Home() {
   const navigate = useNavigate();
@@ -165,7 +170,7 @@ export default function Home() {
           <span className={styles.affiliateLabel}>Complete your trip — book hotels, flights &amp; activities:</span>
           <div className={styles.affiliatePills}>
             {AFFILIATES.map((a) => (
-              <span key={a} className={styles.affiliatePill}>{a}</span>
+              <a key={a.name} href={a.url} target="_blank" rel="noopener noreferrer" className={styles.affiliatePill}>{a.name}</a>
             ))}
           </div>
         </div>
