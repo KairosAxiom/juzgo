@@ -2451,6 +2451,10 @@ app.patch('/admin/corporates/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// ── VOIP (Session 26 — schema + scaffolding, no live Twilio calls yet) ────────
+const createVoipRouter = require('./routes/voip');
+app.use('/voip', createVoipRouter({ supabase, requireAuth }));
+
 // ── START SERVER ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`juzgo backend running on port ${PORT}`);
