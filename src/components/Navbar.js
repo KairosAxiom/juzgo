@@ -43,35 +43,12 @@ export default function Navbar() {
       <div className={styles.inner}>
         {/* Logo */}
         <Link to="/" className={styles.logo} onClick={() => setMenuOpen(false)}>
-          <div className={styles.globeWrap}>
-            <svg className={styles.globeSvg} width="44" height="44" viewBox="0 0 44 44">
-              <defs>
-                <clipPath id="globeClip">
-                  <circle cx="22" cy="22" r="19" />
-                </clipPath>
-                <radialGradient id="oceanGrad" cx="38%" cy="35%" r="65%">
-                  <stop offset="0%" stopColor="#5BA4E5" />
-                  <stop offset="100%" stopColor="#1A5FAB" />
-                </radialGradient>
-              </defs>
-              <circle cx="22" cy="22" r="19" fill="url(#oceanGrad)" />
-              <g clipPath="url(#globeClip)">
-                <ellipse cx="22" cy="22" rx="6" ry="19" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.9" className={styles.globeLon} />
-                <ellipse cx="22" cy="22" rx="13" ry="19" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.9" className={styles.globeLon2} />
-                <ellipse cx="22" cy="15" rx="17" ry="4.5" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
-                <ellipse cx="22" cy="22" rx="19" ry="5.5" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
-                <ellipse cx="22" cy="29" rx="17" ry="4.5" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
-              </g>
-              <ellipse cx="16" cy="14" rx="7" ry="5" fill="rgba(255,255,255,0.15)" />
-              <circle cx="22" cy="22" r="19" fill="none" stroke="rgba(42,111,219,0.5)" strokeWidth="1.2" />
-            </svg>
-
-            {/* Orbiting green dot */}
-            <div className={styles.globeOrbit}>
-              <div className={styles.globeDot} />
-            </div>
-          </div>
-          <span className={styles.logoText}>Juzgo</span>
+          <svg width="32" height="38" viewBox="0 0 38 44" fill="none">
+            <path d="M19 2C11.268 2 5 8.268 5 16c0 10 14 26 14 26S33 26 33 16C33 8.268 26.732 2 19 2z" fill="#1E8E5E" />
+            <circle cx="19" cy="16" r="6" fill="white" opacity="0.9" />
+            <ellipse cx="19" cy="41" rx="8" ry="3" fill="#1E8E5E" opacity="0.25" />
+          </svg>
+                    <span className={styles.logoText}>Juzgo</span>
         </Link>
 
         {/* Desktop links */}
