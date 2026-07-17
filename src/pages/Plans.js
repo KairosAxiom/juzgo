@@ -6,8 +6,6 @@ import Footer from '../components/Footer';
 import styles from './Plans.module.css';
 
 const AFFILIATES = [
-  { name: 'Tiqets',      url: 'https://www.tiqets.com' },
-  { name: 'Booking.com', url: 'https://www.booking.com' },
   { name: 'Klook',       url: 'https://affiliate.klook.com/redirect?aid=127608&aff_adid=1341474&k_site=https%3A%2F%2Fwww.klook.com%2F' },
   { name: 'Expedia',     url: 'https://expedia.com/affiliate/IidJRn7' },
 ];
