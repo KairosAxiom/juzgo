@@ -2,7 +2,6 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useLang } from '../lib/i18n';
 import styles from './Footer.module.css';
-import GlobeLogo from './GlobeLogo';
 
 export default function Footer() {
   const { lang, t } = useLang();
@@ -15,7 +14,11 @@ export default function Footer() {
           {/* Brand column */}
           <div className={styles.brand}>
             <div className={styles.logo}>
-              <GlobeLogo size={30} />
+              <svg width="26" height="30" viewBox="0 0 38 44" fill="none">
+                <path d="M19 2C11.268 2 5 8.268 5 16c0 10 14 26 14 26S33 26 33 16C33 8.268 26.732 2 19 2z" fill="#1E8E5E" />
+                <circle cx="19" cy="16" r="6" fill="white" opacity="0.9" />
+                <ellipse cx="19" cy="41" rx="8" ry="3" fill="#1E8E5E" opacity="0.25" />
+              </svg>
               <span className={styles.logoText}>Juzgo</span>
             </div>
             <p className={styles.tagline}>
