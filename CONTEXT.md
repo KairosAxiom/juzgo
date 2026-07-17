@@ -495,3 +495,39 @@ git config --global --add safe.directory /d/Kairos/juzgo
 1. Real eSIM fulfillment — wire Cloudflare Worker `/airalo/orders` to Airalo's actual API
 2. "Your Request" AI search box for the Plans page
 3. Check/Verify eSIM status button in Admin (blocked until #1 is done)
+
+---
+
+### Session 25 — July 17, 2026 (UI Polish + Affiliates)
+
+**Logo:**
+- Replaced animated blue globe with green location pin SVG in both Navbar and Footer
+- Pin: green teardrop body, white inner circle, shadow disc underneath
+- Consistent across navbar, footer, and mobile drawer
+
+**Affiliates:**
+- Removed Tiqets and Booking.com (too complex to register as affiliates)
+- Klook: ✅ live — `https://affiliate.klook.com/redirect?aid=127608&aff_adid=1341474&k_site=https%3A%2F%2Fwww.klook.com%2F`
+- Expedia: ✅ live — `https://expedia.com/affiliate/IidJRn7`
+- Trip.com: registered but dashboard has loading issue (Trip.com side problem)
+- Booking.com: registered via CJ.com but deferred — too complex
+
+**SPA routing:**
+- `public/_redirects` and `public/404.html` added for Cloudflare Pages
+
+**LanguageToggle:**
+- Replaced `🌐` emoji with inline SVG globe (was rendering as location pin on some platforms)
+
+**Next session — VoIP:**
+- Twilio VoIP dialler to be scoped and built in new chat
+- Questions to answer at start of next session:
+  1. Use case (traveller cheap calls vs customer support vs virtual number)
+  2. Twilio account status (existing or new)
+  3. UI (in-app dialler vs virtual number)
+  4. Monetisation (per-minute from wallet, bundled, or free)
+
+**Latest commits:**
+- df760b56 — Match footer pin size to navbar pin
+- a96abd23 — Replace globe with location pin logo
+- 51c5a4a6 — Remove Tiqets/Booking.com, fix globe icons
+- cda8c125 — Add Expedia affiliate link
