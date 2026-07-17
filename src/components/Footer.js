@@ -14,7 +14,7 @@ export default function Footer() {
           {/* Brand column */}
           <div className={styles.brand}>
             <div className={styles.logo}>
-              <svg width="38" height="44" viewBox="0 0 38 44" fill="none">
+              <svg width="26" height="32" viewBox="0 0 38 44" fill="none" style={{marginBottom: "-4px"}}>
                 <path d="M19 2C11.268 2 5 8.268 5 16c0 10 14 26 14 26S33 26 33 16C33 8.268 26.732 2 19 2z" fill="#1E8E5E" />
                 <circle cx="19" cy="16" r="6" fill="white" opacity="0.9" />
                 <ellipse cx="19" cy="41" rx="8" ry="3" fill="#1E8E5E" opacity="0.25" />
