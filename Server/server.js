@@ -2451,9 +2451,19 @@ app.patch('/admin/corporates/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// ── VOIP (Session 26 — schema + scaffolding, no live Twilio calls yet) ────────
+// ── SAVED PAYMENT METHODS (Session 27) ───────────────────────────────────────
+// Platform-level card storage (Stripe SetupIntent + saved PaymentMethod).
+// VOIP is its first consumer — card-locked rental billing needs a card on
+// file — but nothing in this router is VOIP-specific.
+const createPaymentMethodsRouter = require('./routes/payment-methods');
+app.use('/payment-methods', createPaymentMethodsRouter({ supabase, requireAuth, stripe }));
+
+// ── VOIP (Session 27 — card-locked billing + Twilio suspend mechanism) ───────
+// sendPushToUser and sendEmail are module-local functions, not exports, so
+// they're injected here for the dunning cascade. Mutating Twilio calls stay
+// gated behind VOIP_TWILIO_LIVE until deliberately enabled.
 const createVoipRouter = require('./routes/voip');
-app.use('/voip', createVoipRouter({ supabase, requireAuth }));
+app.use('/voip', createVoipRouter({ supabase, requireAuth, stripe, sendPushToUser, sendEmail }));
 
 // ── START SERVER ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
