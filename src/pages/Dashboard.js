@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
+import VoipPaymentCard from '../components/VoipPaymentCard';
 import styles from './Dashboard.module.css';
 
-const TABS = ['Overview', 'Referral', 'Reseller Portal'];
+const TABS = ['Overview', 'Referral', 'VOIP', 'Reseller Portal'];
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
@@ -92,7 +93,10 @@ export default function Dashboard() {
     );
   }
 
-  const tabs = isReseller ? TABS : TABS.slice(0, 2);
+  // Filter by name rather than TABS.slice(0, 2). The old positional
+  // slice hid everything past index 1 from non-resellers, so any tab
+  // appended to TABS would have been invisible to most users.
+  const tabs = TABS.filter((tb) => tb !== 'Reseller Portal' || isReseller);
 
   return (
     <div className={styles.page}>
@@ -222,6 +226,13 @@ export default function Dashboard() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── VOIP tab ── */}
+        {tab === 'VOIP' && (
+          <div className={styles.tabContent}>
+            <VoipPaymentCard />
           </div>
         )}
 
