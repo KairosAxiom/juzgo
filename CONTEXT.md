@@ -1196,3 +1196,353 @@ test isn't built against logic that's about to be replaced anyway. Leaning
 toward (b) given how much of the purchase/billing shape changed this
 session — worth deciding explicitly at the start of next session rather
 than assuming.
+---
+
+## Session 27 — VOIP: card-locked billing rewritten, deployed, verified live (July 22, 2026)
+
+**Starting point:** `VOIP-NEXT-SESSION-BRIEF.md` offered two paths — (A) do
+the sandbox `<Dial><Client>` test that Session 26 never got to, or (B)
+rewrite `voip.js`'s billing/purchase logic to match the four decisions
+locked at the end of Session 26, *then* test. Picked **B** explicitly, on
+the brief's own reasoning: the current scaffolding still assumed
+wallet-only billing with a grace period, so testing against it would mean
+redoing the test after the rewrite. Full file rewrites, per usual
+preference.
+
+### Two design decisions taken at the start
+
+1. **Dunning timeline locked: retry days 1 and 3, suspend day 7, release
+   day 12.** Day 12 rather than 10 because the reminder cascade needs room
+   to work — the user has to disable CFU on their own handset, a manual
+   action they may only get to on a weekend. Twilio's own process holds a
+   released number ~10 further days before it re-enters the public pool,
+   so the real end-to-end recycling window is ~22 days.
+2. **Twilio credentials set live, suspend mechanism shipped as real code
+   rather than stubbed** — but every mutating call gated behind a
+   `VOIP_TWILIO_LIVE` env flag, defaulting off. Reasoning: the
+   suspend-via-`VoiceUrl` swap is the entire point of the rewrite; shipping
+   it as a comment would have meant a third pass to un-stub it. The flag
+   gives the safety of a stub with none of the rework. Number *purchase* is
+   gated a second time behind `VOIP_TWILIO_ALLOW_PURCHASE` because every
+   purchase test costs real money and a US test number already exists.
+
+### Built and shipped this session
+
+- **`migrations/voip-cardlock-migration.sql`** — new. Adds
+  `stripe_customer_id`, `default_payment_method_id` and display-only card
+  fields (`card_brand`, `card_last4`, `card_exp_month/year`,
+  `card_attached_at`) to `profiles`; adds suspension-lifecycle columns to
+  `voip_numbers` (`stripe_payment_method_id`, `suspended_at`,
+  `suspend_reason`, `release_scheduled_at`, `failed_charge_count`,
+  `first_failure_at`, `last_charge_attempt_at`, `last_reminder_stage`,
+  `voice_url_before_suspend`); makes `voip_charges` Stripe-aware
+  (`stripe_payment_intent_id`, `failure_code`, `failure_message`,
+  `attempt_number`). Two unique indexes act as double-charge backstops:
+  one on `stripe_payment_intent_id`, one on
+  `(voip_number_id, billing_period_start) WHERE status='paid'`.
+- **`Server/routes/payment-methods.js`** — new factory router, mounted at
+  `/payment-methods`. Stripe SetupIntent flow (`usage: 'off_session'`),
+  card attach with an ownership check against the Stripe Customer,
+  saved-card read, and a detach endpoint that **refuses while the user
+  holds a live VOIP number** — letting someone remove their card
+  mid-rental would recreate exactly the abandonment problem card-locking
+  was designed to remove. Deliberately platform-level, not VOIP-specific:
+  card storage is reusable by any future recurring product. Card details
+  never touch the server (client-side `confirmCardSetup` only), keeping
+  Juzgo outside PCI scope.
+- **`Server/routes/voip.js`** — full rewrite, ~1,100 lines. Wallet billing
+  and the 3-day grace-period path removed entirely. New:
+  `GET /eligibility` (profile hard gate + card check, called by the
+  storefront *before* showing a buy button so the user isn't failed at the
+  last step), card-locked `POST /numbers/purchase`,
+  `POST /numbers/:id/reactivate` (recovery path for a suspended number),
+  live Twilio availability lookup, real TwiML generation with caller-ID
+  pass-through and `<Record>` voicemail fallback, and `X-Twilio-Signature`
+  validation on all three webhooks. `runVoipRenewalBilling()` rewritten as
+  a two-pass job: renewals due, then the dunning cascade.
+- **`Server/server.js`** — mount block replaced (lines 2454–2466). Both
+  routers now receive injected dependencies. Verified by `diff` against
+  the pre-edit file that *only* those lines changed.
+
+### The mount signature changed — worth knowing
+
+`sendPushToUser` (server.js ~line 82) and `sendEmail` (~line 1912) are
+module-local functions, **not exports**, so a factory router can't reach
+them. Both are now injected:
+
+```js
+app.use('/voip', createVoipRouter({ supabase, requireAuth, stripe, sendPushToUser, sendEmail }));
+```
+
+This matters for the dunning cascade — those two functions *are* the
+reminder mechanism, and the reminder cascade is the only thing that
+actually gets a user to disable CFU on their own phone.
+
+### Three problems caught before they reached production
+
+1. **The Session 26 migration had never actually been applied.** The
+   cardlock migration failed on `relation "voip_numbers" does not exist`.
+   Session 26's notes say the migration "ran clean in Supabase SQL Editor,
+   confirmed no errors" and that a live curl test passed — but that test
+   hit `/voip/available-numbers`, which returned hardcoded mock data and
+   never touched the database. It would have passed identically against a
+   database with no VOIP tables at all. **Lesson: a passing endpoint test
+   only proves what the endpoint actually reads.** Verify migrations by
+   querying `information_schema`, not by exercising an endpoint that might
+   not depend on them.
+2. **`voip_numbers.status` had a CHECK constraint that would have rejected
+   the new statuses.** Session 26's migration allowed only `pending`,
+   `active`, `grace_period`, `released`, `suspended`. The dunning cascade
+   writes `past_due` and `pending_release`. Every `ALTER TABLE` would have
+   applied cleanly and then the *first failed charge* would have thrown a
+   constraint violation — in production, on the unhappy path, weeks after
+   deploy. Caught only because the Session 26 migration file was pasted in
+   full. The cardlock migration now drops and recreates both status CHECKs,
+   and its verification query asserts the new constraint actually admits
+   `past_due`, rather than merely asserting a constraint of that name
+   exists.
+3. **`profiles` has no `email` column.** Four call sites selected it and
+   would have broken: Stripe customer creation, every dunning email, the
+   eligibility gate, and the purchase hard gate. Email lives in
+   `auth.users`, readable only via `supabase.auth.admin.getUserById()` with
+   the service role key (confirmed `server.js` line 12 uses
+   `SUPABASE_SERVICE_ROLE_KEY`). All four patched to a shared
+   `getUserEmail()` helper that returns null rather than throwing — a
+   missing email should degrade a receipt, not block a payment.
+
+### Verification performed
+
+- `node --check` on all three files
+- `diff` of `server.js` against the pre-edit upload: only the intended
+  mount block differs
+- Both routers instantiated against real Express and all 14 routes
+  enumerated
+- **Isolated 7-case unit test of the dunning state machine** (mocked
+  Supabase + Stripe, no network): successful renewal, first failure →
+  `past_due`, day 5 final warning without premature suspension, day 7
+  suspend with `VoiceUrl` cleared and release scheduled, day 12 release,
+  mid-cascade card recovery resetting the whole cascade, and — the
+  important safety case — a row with `twilio_sid = null` never triggering
+  a real Twilio release. All pass.
+- Migration verification query returned `7 | 9 | 5 | 5 | yes`
+- **Live authenticated curl against the deployed backend, all three green:**
+  - `/voip/eligibility` → `{"eligible":false,"has_card":false,"missing_profile_fields":["phone"]}`
+    — proves the migration applied, the hard gate works, and
+    `getUserEmail()` resolves (email did *not* appear in the missing list)
+  - `/payment-methods` → `{"has_card":false,"card":null}` — new router mounted
+  - `/voip/available-numbers?country=US` → ten real Twilio numbers with
+    localities, `"mock":false` — Twilio credentials live and SDK working
+
+### Render environment
+
+Three vars added to the `juzgo-backend` service: `TWILIO_ACCOUNT_SID`,
+`TWILIO_AUTH_TOKEN`, `BACKEND_URL=https://esimconnect-backend.onrender.com`.
+`VOIP_TWILIO_LIVE` and `VOIP_TWILIO_ALLOW_PURCHASE` deliberately **unset** —
+everything runs in mock mode, logging what it would have done.
+
+**Note on the service name:** the Render service has been renamed to
+`juzgo-backend`, but the **URL is still `esimconnect-backend.onrender.com`**
+(verified: `juzgo-backend.onrender.com` returns 404). Earlier notes said the
+rename was impossible; it's the *display name* that's changeable and the URL
+that's permanent. `BACKEND_URL` must stay on the old hostname — it's what
+builds webhook URLs in TwiML and what `validateTwilioSignature()`
+reconstructs to check against. A mismatch would 403 every webhook and look
+like a signature bug rather than a config error.
+
+### Not built this session — carries forward
+
+- **Frontend card component.** `/setup-intent` and `/attach` are ready but
+  nothing calls them. Needs a CardElement with `hidePostalCode: true`,
+  presented as its own section labeled "Payment card for VOIP rental",
+  distinct from wallet balance (locked decision 3).
+- **`profiles.phone` is empty**, so the hard gate currently blocks purchase
+  for the admin test account. Either build the registration change (locked
+  decision 1) or set it manually in Supabase to unblock testing.
+- **Render cron for `runVoipRenewalBilling()`** — exported and tested, but
+  nothing calls it on a schedule. Needs a daily Render Cron Service.
+- **The sandbox `<Dial><Client>` test** — still not done, but now genuinely
+  unblocked and independent of the three items above.
+- Admin VOIP tab; Terms & Conditions prohibited-use clause (flagged for
+  actual legal review, not just internal drafting).
+
+### Also noted
+
+- Twilio account is still on **trial** ($10.90 balance). Trial accounts
+  restrict outbound calls to verified numbers and prepend a Twilio message.
+  Probably fine for an inbound `<Dial><Client>` test, but worth knowing
+  before reading a distorted result as a code bug.
+- Singapore Regulatory Bundle status not re-checked this session.
+  `?country=SG` will 502 on availability lookup until it clears — expected
+  behavior, not a regression. Test with `?country=US`.
+- A 160MB `Juzgo Full Backup/` directory was found untracked in the repo
+  root and added to `.gitignore` before it could be committed. Git stores
+  history permanently, so committing it once would have bloated every
+  future clone even after deletion.
+- 8 npm vulnerabilities reported (6 moderate, 2 high) after
+  `npm install twilio` — almost certainly pre-existing transitive deps.
+  Deliberately not running `npm audit fix` mid-session; it can bump majors
+  and break the build.
+
+---
+
+## Session 28 — VOIP: card-attach frontend, card-locked purchase path verified end to end (July 23, 2026)
+
+**Starting point:** `VOIP-NEXT-SESSION-BRIEF.md` (written end of Session 27)
+offered three paths — (A) the sandbox `<Dial><Client>` test, (B) the frontend
+card-attach component, (C) the registration flow change. The brief leaned A on
+the grounds that the core mechanism had been deferred three sessions running.
+
+**Picked B**, and the reason for overriding the brief is worth recording. Path A
+depends on the Twilio account being upgraded off trial — trial accounts restrict
+outbound calls to verified numbers and prepend a Twilio announcement, either of
+which can make a working implementation look broken. The decision not to upgrade
+this session made A a bad use of the time: a distorted result would have been
+read as a code bug and burned the session. The Singapore Regulatory Bundle was
+also not re-checked, so `?country=SG` remains expected to 502.
+
+**A is now deferred a fourth session.** That is a real accumulating risk, not a
+neutral outcome, and Session 29 should not defer it again without upgrading
+Twilio first.
+
+### Design decisions taken
+
+1. **Card attach lives on the Dashboard, in its own tab.** Dashboard already had
+   a tab bar, which gave maximum separation from wallet balance — the thing
+   locked decision 3 asks for. Considered and rejected: Wallet.js (had
+   `<Elements>` already wired, but semantically wrong — every user seeing a card
+   form on the wallet page would read it as another top-up method) and a new
+   Account/Profile page (none exists; `ls src/pages/` confirmed no Account,
+   Profile or Settings file).
+2. **The component is built for two mount points, used in one.** Standalone,
+   self-fetching, brings its own `<Elements>`. Today it mounts on the Dashboard
+   in management mode. When the VOIP checkout exists it mounts there too, as a
+   blocking step before payment — that is where `/voip/eligibility` was designed
+   to be called from.
+3. **Wallet-vs-card reconciliation.** The intended user flow has a
+   "pay by wallet or card" step at VOIP checkout, which conflicts with Session
+   27 having removed wallet billing from `voip.js` entirely. Resolution:
+   **wallet may pay the first month, but a card must be on file regardless.**
+   The card is not the checkout payment method — it is the guarantee for month 2
+   onward. eSIM is different and stays wallet-friendly: one-time purchase, no
+   renewal, no abandonment risk. The component copy states this distinction
+   explicitly rather than leaving it implicit.
+4. **Replace-card is attach-then-overwrite.** Confirmed by reading the actual
+   `/attach` handler rather than inferring from grep: it updates
+   `default_payment_method_id` unconditionally, with no check for an existing
+   card and no rejection. So the user is never briefly without a card on file.
+
+### Built and shipped this session
+
+Commit `bfaf1085`, 4 files, 501 insertions.
+
+- **`src/lib/stripe.js`** — new. Single shared `stripePromise`. Wallet.js,
+  Checkout.js and CorporateDashboard.js each still call `loadStripe()` at module
+  scope; those can migrate later (one-line change each). Adding a fourth
+  duplicate call was the alternative and would have made the drift worse.
+- **`src/components/VoipPaymentCard.js`** — new. Self-contained, self-fetching
+  on mount, brings its own `<Elements>` wrapper. Three states: no card / card on
+  file / loading. `hidePostalCode: true`. Full SetupIntent flow —
+  `POST /payment-methods/setup-intent` → client-side `confirmCardSetup` →
+  `POST /payment-methods/attach`. Card details never touch the server, keeping
+  Juzgo outside PCI scope. Includes a 60-day expiry warning: a card that expires
+  mid-rental triggers the dunning cascade for no good reason.
+- **`src/components/VoipPaymentCard.module.css`** — new.
+- **`src/pages/Dashboard.js`** — VOIP tab added, plus the TABS fix below.
+
+### The `TABS.slice(0, 2)` latent bug
+
+Dashboard gated the reseller tab positionally:
+
+```js
+const tabs = isReseller ? TABS : TABS.slice(0, 2);
+```
+
+Appending `'VOIP'` to `TABS` would have made it index 3 and therefore **invisible
+to every non-reseller** — which is almost everyone. The tab would have rendered
+correctly in a reseller test account and silently vanished for real users.
+Replaced with a name filter:
+
+```js
+const tabs = TABS.filter((tb) => tb !== 'Reseller Portal' || isReseller);
+```
+
+Positional slicing over a config array is a trap that fires every time someone
+adds an entry. Worth checking for the same pattern elsewhere in the codebase.
+
+### Verification performed
+
+- **`diff` against the uploaded pre-edit `Dashboard.js`** — exactly four intended
+  changes (import, TABS constant, tabs filter, VOIP tab block), nothing else
+  touched. 292 → 303 lines.
+- **Endpoint shapes read from source before calling them**, not assumed:
+  `router.delete('/')` confirmed at line 225 of `payment-methods.js` (so
+  `DELETE /payment-methods` was correct); purchase body confirmed as
+  `{ phone_number, country_code, monthly_rate_sgd }`.
+- **Browser: full attach → persist → remove cycle.** Card saved, VISA •••• 4242
+  displayed, survived a page refresh (proving the `GET` read path, not just local
+  state), removed cleanly.
+- **`profiles.phone` set** to a real number in E.164 format. First attempt stored
+  `6580685373` — the quotes came off the literal and Postgres evaluated `+65...`
+  as arithmetic, silently dropping the plus. E.164 matters: Twilio requires it and
+  the dunning SMS path would fail on a bare digit string.
+- **`GET /voip/eligibility` → `{"eligible":true,"has_card":true,"card":{"brand":"visa","last4":"4242"},"missing_profile_fields":[]}`**
+  — first time this gate has ever returned true.
+- **`POST /voip/numbers/purchase` → success.** Row `cb558e94`, status `active`,
+  `charged: 8`, `mock_twilio: true`, `twilio_sid: null`, renewal set to
+  2026-08-23, payment method pinned to the row.
+- **Charge verified in the database, not from the endpoint's own report:**
+  `voip_charges` row `63842818`, SGD 8.00, status `paid`, real PaymentIntent
+  `pi_3TwHz1Bjjpu...`, attempt 1. This is deliberately the Session 27 lesson
+  applied — an endpoint claiming success only proves what the endpoint reads.
+- **Detach guard tested on the first occasion it could fire.** With a live number
+  held, Remove card correctly refused: *"Cannot remove your card while you have an
+  active VOIP number. Release the number first."*
+
+### Two defects noted, neither blocking
+
+1. **`IntegrationError: could not retrieve data from the specified Element`** —
+   fires when `confirmCardSetup` runs against an unmounted `CardElement`, most
+   likely a double-click on Save. The card still saved correctly. Needs a guard
+   keeping the button disabled while a save is in flight.
+2. **`/attach` orphans the previous PaymentMethod on replace.** It stays attached
+   to the Stripe Customer, just no longer default. Functionally harmless; cards
+   accumulate over time. Future cleanup: detach the old one after a successful
+   overwrite.
+
+Also pre-existing and unrelated: a **406** in the browser console from
+`checkReseller`'s `.single()` call returning zero rows for a non-reseller account.
+
+### Test data left in place
+
+`voip_numbers` row `cb558e94` — `+16086748603`, US, status `active`,
+`next_renewal_at` 2026-08-23, `twilio_sid` null.
+
+**This number is not actually owned.** `VOIP_TWILIO_ALLOW_PURCHASE` was off, so
+Twilio was never called and the number remains in Twilio's public pool. The row
+is a database record of a purchase that did not happen at the carrier — the
+correct outcome for a Stripe-path test. If `runVoipRenewalBilling()` runs after
+2026-08-23 it will attempt to charge this row again. Delete it when no longer
+useful.
+
+### Environment / infrastructure
+
+- Twilio still on **trial** ($10.90). Unchanged, and now the gating factor for
+  the `<Dial><Client>` test.
+- Singapore Regulatory Bundle **not re-checked**. `?country=SG` still expected to
+  502.
+- `GET /voip/available-numbers?country=US` returned ten real Twilio numbers with
+  localities and `"mock":false` — live SDK, SGD 8/month.
+- **Git Bash lost its working directory mid-session** — `pwd` reported the path
+  from memory while the OS could not resolve it, producing a run of misleading
+  "No such file or directory" errors on files that existed. USB drive remount.
+  Recovery is to re-`cd`; the tell is `(main)` disappearing from the prompt.
+- Two Project Knowledge documents (`CONTEXT-session27-append.md`,
+  `VOIP-NEXT-SESSION-BRIEF (1).md`) are sitting untracked in the repo root.
+  Should be removed so a future `git add .` does not commit them.
+
+### Endpoints confirmed to already exist (relevant to Session 29)
+
+`GET /voip/numbers`, `POST /voip/numbers/:id/release`, and
+`POST /voip/numbers/:id/reactivate` are all present in `voip.js`. The number
+inventory UI is therefore pure frontend work against finished endpoints — the
+same shape as this session.
