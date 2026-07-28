@@ -10,6 +10,36 @@ const TRUST_BADGES = {
   ai:          { label: 'AI Recommended',     icon: '🤖', cls: 'badgeAi' },
 };
 
+// Well-known example spots per destination for the "add your own" placeholder.
+// Keyed on a lowercased substring match against the destination string, so
+// "Tokyo, Japan" and "tokyo" both hit the Tokyo example. Anything not listed
+// falls back to a generic prompt naming the destination.
+const PLACEHOLDER_EXAMPLES = [
+  { match: 'singapore', ex: 'Tian Tian Hainanese Chicken Rice' },
+  { match: 'tokyo',     ex: 'Tsukiji Outer Market' },
+  { match: 'japan',     ex: 'Fushimi Inari Shrine' },
+  { match: 'seoul',     ex: 'Gwangjang Market' },
+  { match: 'korea',     ex: 'Gyeongbokgung Palace' },
+  { match: 'bangkok',   ex: 'Wat Arun' },
+  { match: 'thailand',  ex: 'Chatuchak Weekend Market' },
+  { match: 'hong kong', ex: 'Tim Ho Wan' },
+  { match: 'taipei',    ex: 'Din Tai Fung' },
+  { match: 'taiwan',    ex: 'Shilin Night Market' },
+  { match: 'paris',     ex: 'Musée d\'Orsay' },
+  { match: 'london',    ex: 'Borough Market' },
+  { match: 'new york',  ex: 'Katz\'s Delicatessen' },
+  { match: 'bali',      ex: 'Tegallalang Rice Terraces' },
+  { match: 'kuala lumpur', ex: 'Jalan Alor Food Street' },
+  { match: 'malaysia',  ex: 'Batu Caves' },
+];
+
+function placeholderFor(destination) {
+  const d = (destination || '').toLowerCase();
+  const hit = PLACEHOLDER_EXAMPLES.find((e) => d.includes(e.match));
+  if (hit) return `e.g. ${hit.ex}`;
+  return destination ? `e.g. a favourite spot in ${destination}` : 'e.g. a place you love';
+}
+
 export default function PlacePicker({ destination, places, onConfirm, onBack, loading }) {
   // Nothing is pre-selected. The traveller reads through each place (using
   // the "why go / best time / suggested time" detail on every card) and
@@ -236,7 +266,7 @@ export default function PlacePicker({ destination, places, onConfirm, onBack, lo
         <div className={styles.addRow}>
           <input
             type="text"
-            placeholder="e.g. Tian Tian Hainanese Chicken Rice"
+            placeholder={placeholderFor(destination)}
             value={customPlace}
             onChange={(e) => setCustomPlace(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addCustomPlace()}
