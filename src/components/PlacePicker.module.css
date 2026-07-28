@@ -97,6 +97,31 @@
   font-size: 13px; line-height: 1.5; color: #5B6B62; margin: 0 0 10px;
 }
 
+/* Expandable detail block (why go / best time / suggested time) */
+.detailToggle {
+  display: inline-block; margin-top: 10px; padding: 0;
+  background: none; border: none;
+  font-family: 'Hanken Grotesk', sans-serif;
+  font-size: 12px; font-weight: 700; color: #1E8E5E; cursor: pointer;
+}
+.detailToggle:hover { color: #15734B; text-decoration: underline; }
+
+.detailBox {
+  margin-top: 10px; padding: 12px 14px;
+  background: #F4F8F6; border: 1px solid #E2E9E5; border-radius: 12px;
+  display: flex; flex-direction: column; gap: 9px;
+  cursor: default;
+}
+
+.detailRow { display: flex; flex-direction: column; gap: 2px; }
+
+.detailLabel {
+  font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: #6A7A70;
+}
+
+.detailText { font-size: 13px; line-height: 1.5; color: #3A4A41; }
+
 /* Trust badges */
 .trustBadge {
   display: inline-flex; align-items: center; gap: 5px;

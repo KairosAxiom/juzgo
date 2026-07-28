@@ -11,20 +11,31 @@ const TRUST_BADGES = {
 };
 
 export default function PlacePicker({ destination, places, onConfirm, onBack, loading }) {
-  // Core places (what the traveller actually asked for) are pre-selected.
-  // Optional places (Stage 3's overproduced "bonus" suggestions) are shown
-  // but start unchecked — the traveller opts into extras rather than having
-  // to notice and untick things they never asked for. Anything without a
-  // tier field (older data, or a fallback add) is treated as core.
+  // Nothing is pre-selected. The traveller reads through each place (using
+  // the "why go / best time / suggested time" detail on every card) and
+  // opts in individually, or uses Select all. The core/optional split is
+  // kept only for section grouping — "core" places match the requested pace
+  // and show first, "optional" are the overproduced bonus suggestions —
+  // but neither starts ticked. Anything without a tier field (older data,
+  // or a fallback add) is grouped with core.
   const corePlaces = places.filter((p) => p.tier !== 'optional');
   const optionalPlaces = places.filter((p) => p.tier === 'optional');
 
-  const [selected, setSelected] = useState(() => new Set(corePlaces.map((p) => p.id)));
+  const [selected, setSelected] = useState(() => new Set());
+  const [expanded, setExpanded] = useState(() => new Set());
   const [customPlace, setCustomPlace] = useState('');
   const [customPlaces, setCustomPlaces] = useState([]);
 
   function toggle(id) {
     setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleExpand(id) {
+    setExpanded((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -78,6 +89,8 @@ export default function PlacePicker({ destination, places, onConfirm, onBack, lo
     const badge = place.trust ? TRUST_BADGES[place.trust] : TRUST_BADGES.ai;
     const checked = selected.has(place.id);
     const isUserSpecified = place.source === 'user_specified';
+    const hasDetail = Boolean(place.whyVisit || place.bestTime || place.duration);
+    const isExpanded = expanded.has(place.id);
     return (
       <div
         key={place.id}
@@ -107,6 +120,40 @@ export default function PlacePicker({ destination, places, onConfirm, onBack, lo
               📅 Dates TBC
             </span>
           )}
+
+          {hasDetail && (
+            <>
+              <button
+                type="button"
+                className={styles.detailToggle}
+                onClick={(e) => { e.stopPropagation(); toggleExpand(place.id); }}
+              >
+                {isExpanded ? 'Less details ▲' : 'More details ▼'}
+              </button>
+              {isExpanded && (
+                <div className={styles.detailBox} onClick={(e) => e.stopPropagation()}>
+                  {place.whyVisit && (
+                    <div className={styles.detailRow}>
+                      <span className={styles.detailLabel}>✨ Why go</span>
+                      <span className={styles.detailText}>{place.whyVisit}</span>
+                    </div>
+                  )}
+                  {place.bestTime && (
+                    <div className={styles.detailRow}>
+                      <span className={styles.detailLabel}>🕐 Best time</span>
+                      <span className={styles.detailText}>{place.bestTime}</span>
+                    </div>
+                  )}
+                  {place.duration && (
+                    <div className={styles.detailRow}>
+                      <span className={styles.detailLabel}>⏳ Suggested time</span>
+                      <span className={styles.detailText}>{place.duration}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     );
@@ -119,7 +166,7 @@ export default function PlacePicker({ destination, places, onConfirm, onBack, lo
       <div className={styles.eyebrow} style={{ marginTop: 20 }}>Recommended for {destination}</div>
       <h1 className={styles.h1}>Pick what you'd like to see</h1>
       <p className={styles.sub}>
-        We've researched {corePlaces.length} places to match your pace{optionalPlaces.length > 0 ? `, plus ${optionalPlaces.length} extra suggestions below if you'd like a fuller trip` : ''}. Untick anything that doesn't interest you, or add your own.
+        We've researched {corePlaces.length} places to match your pace{optionalPlaces.length > 0 ? `, plus ${optionalPlaces.length} extra suggestions below if you'd like a fuller trip` : ''}. Tap <strong>More details</strong> on any place to learn more, then tick the ones you'd like — or use <strong>Select all</strong>. You can also add your own.
       </p>
 
       <div className={styles.toolbar}>
