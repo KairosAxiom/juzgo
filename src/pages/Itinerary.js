@@ -589,6 +589,7 @@ export default function Itinerary() {
 
   const [itineraryLoading, setItineraryLoading] = useState(false);
   const [planDirty, setPlanDirty] = useState(false); // true after a place is moved but before the written plan is regenerated
+  const [planGenerated, setPlanGenerated] = useState(false); // false until the user confirms edits and generates the written plan
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
@@ -641,7 +642,12 @@ export default function Itinerary() {
     // real optional suggestions to offer rather than exactly enough to fill
     // the requested pace and nothing more.
     const requestedCount = dayCount * perDayCount;
-    const targetCount = Math.min(45, Math.max(10, Math.round(requestedCount * 1.4)));
+    // Overproduce modestly (~30%) for optional suggestions, but cap lower than
+    // before: the richer per-place schema (whyVisit/bestTime/duration) makes
+    // each object ~3x larger, so a high place count pushes the research
+    // response long enough to risk truncation/timeout on content-heavy
+    // destinations (e.g. Japan). 30 keeps the payload comfortably whole.
+    const targetCount = Math.min(30, Math.max(10, Math.round(requestedCount * 1.3)));
     const mustSeeList = mustSee.split(',').map((s) => s.trim()).filter(Boolean);
     const accomLine = noAccommodation
       ? 'Accommodation not yet booked — feel free to suggest a well-located area to stay.'
@@ -658,10 +664,10 @@ ${departureLine}
 ${accomLine}
 ${mustSeeLine}
 
-Respond with ONLY a valid JSON array, no markdown fences, no prose. Each object:
-{"id":"slug","name":"Place name","type":"category","description":"max 20 words","whyVisit":"1 sentence, max 30 words, on what makes it worth a stop","bestTime":"short phrase, e.g. 'Early morning to beat crowds' or 'Sunset'","duration":"typical visit length as a range, e.g. '1–2 hours'","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number,"tier":"core|optional","dateUncertain":boolean}
+Respond with ONLY a valid JSON array, no markdown fences, no prose. Keep every field tight — the whole array must fit in one response, so brevity matters. Each object:
+{"id":"slug","name":"Place name","type":"category","description":"max 15 words","whyVisit":"max 20 words on what makes it worth a stop","bestTime":"max 6 words, e.g. 'Early morning, before crowds'","duration":"a range, e.g. '1–2 hours'","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number,"tier":"core|optional","dateUncertain":boolean}
 
-The "description" stays a punchy one-liner. "whyVisit", "bestTime", and "duration" are the richer detail a traveller reads before deciding — keep each concise and specific to THIS place (no generic filler like "a must-see for everyone"). "duration" is a rough guide only; never phrase it as an instruction.
+Stay within those word caps. "whyVisit", "bestTime", and "duration" are the richer detail a traveller reads before deciding — keep each concise and specific to THIS place (no generic filler like "a must-see for everyone"). "duration" is a rough guide only; never phrase it as an instruction.
 
 Use real, accurate coordinates for each place — this matters more than usual, since we group places into days by their coordinates afterward, not by anything you decide. "michelin" only for actual Michelin recognition, "unesco" only for actual World Heritage sites, "tourism" for official board picks, "tripadvisor" for known traveller favorites, "gem" for genuine local spots, "ai" as fallback. Favor a spatially varied set across ${destination} over clustering everything in one neighborhood, so the whole trip has enough ground to work with once we group it geographically.
 
@@ -675,7 +681,7 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
       const res = await fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4800, messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: [{ role: 'user', content: prompt }] }),
       });
       const data = await res.json();
       const text = data.content?.[0]?.text || '';
@@ -721,17 +727,39 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
   }
 
   function parsePlacesJSON(text) {
+    const cleaned = text.replace(/```json|```/g, '').trim();
+    // Fast path: well-formed array.
     try {
-      const cleaned = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleaned);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      const match = text.match(/\[[\s\S]*\]/);
-      if (match) {
-        try { return JSON.parse(match[0]); } catch { return []; }
+      if (Array.isArray(parsed)) return parsed;
+    } catch { /* fall through to salvage */ }
+
+    // Salvage path: the response may be truncated (array never closed) if the
+    // model ran long. Rather than fail the whole trip, pull out every complete
+    // top-level object and keep them — a partial list beats an error screen.
+    const start = cleaned.indexOf('[');
+    if (start === -1) return [];
+    const body = cleaned.slice(start + 1);
+    const objects = [];
+    let depth = 0, inStr = false, esc = false, buf = '';
+    for (const ch of body) {
+      if (esc) { buf += ch; esc = false; continue; }
+      if (ch === '\\') { buf += ch; esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; buf += ch; continue; }
+      if (inStr) { buf += ch; continue; }
+      if (ch === '{') { if (depth === 0) buf = ''; depth++; buf += ch; continue; }
+      if (ch === '}') {
+        depth--;
+        buf += ch;
+        if (depth === 0) {
+          try { objects.push(JSON.parse(buf)); } catch { /* skip malformed */ }
+          buf = '';
+        }
+        continue;
       }
-      return [];
+      if (depth > 0) buf += ch;
     }
+    return objects;
   }
 
   /* ── Stage 3 → 4: build itinerary from chosen places ── */
@@ -753,7 +781,22 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
     window.__finalPlaces = orderedPlaces;
     setStep(4);
     setPlanDirty(false);
-    await buildItineraryFromPlaces(orderedPlaces);
+    setPlanGenerated(false);
+    setMessages([]);
+    // Note: the written itinerary is NOT generated here. The traveller lands
+    // on the map + editable day list first, arranges days as they like, and
+    // only then clicks "Confirm & generate" (confirmAndGenerate) to build the
+    // prose. This avoids spending a Claude call on an arrangement they're
+    // about to change.
+  }
+
+  /* First-time generation, fired by the Confirm button once the traveller is
+     happy with the day arrangement. Subsequent moves use the dirty/Regenerate
+     flow instead. */
+  async function confirmAndGenerate() {
+    setPlanGenerated(true);
+    setPlanDirty(false);
+    await buildItineraryFromPlaces(finalPlaces);
   }
 
   /* Moves a single place onto a different day (from the Step-4 editor), then
@@ -887,6 +930,8 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
     setDestination(data.destination || '');
     setFinalPlaces(data.selected_places || []);
     setMessages([{ role: 'assistant', content: data.trip_data || '' }]);
+    setPlanGenerated(true);
+    setPlanDirty(false);
     setStep(4);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -947,6 +992,7 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
       setTravelers(data.travelers || 1);
       setBudget(data.budget || 'moderate');
       setMessages([{ role: 'assistant', content: data.content || '' }]);
+      setPlanGenerated(true);
       setStep(4);
       // Auto-save now that the user is logged in
       supabase.from('saved_itineraries').insert({
@@ -963,6 +1009,8 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
   function resetAll() {
     setStep(1);
     setMessages([]);
+    setPlanGenerated(false);
+    setPlanDirty(false);
     setDestination('');
     setMustSee('');
     setRecommendedPlaces([]);
@@ -1194,9 +1242,11 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
                 </div>
               </div>
               <div className={styles.chatActions}>
-                <button className={styles.btnSave} onClick={savedId ? updateSavedItinerary : saveItinerary}>
-                  {savedId ? 'Update' : 'Save itinerary'}
-                </button>
+                {planGenerated && (
+                  <button className={styles.btnSave} onClick={savedId ? updateSavedItinerary : saveItinerary}>
+                    {savedId ? 'Update' : 'Save itinerary'}
+                  </button>
+                )}
                 <button className={styles.btnRestart} onClick={resetAll}>New trip</button>
               </div>
             </div>
@@ -1211,11 +1261,27 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
                 <div className={styles.editorHead}>
                   <div>
                     <div className={styles.editorTitle}>Your stops by day</div>
-                    <div className={styles.editorHint}>Move any place to a different day, then regenerate the written plan.</div>
+                    <div className={styles.editorHint}>
+                      {planGenerated
+                        ? 'Move any place to a different day, then regenerate the written plan.'
+                        : 'Arrange your stops across the days. When you\'re happy, confirm to generate your day-by-day itinerary.'}
+                    </div>
                   </div>
                 </div>
 
-                {planDirty && (
+                {!planGenerated && (
+                  <div className={styles.confirmBar}>
+                    <button
+                      className={styles.btnConfirmPlan}
+                      onClick={confirmAndGenerate}
+                      disabled={itineraryLoading}
+                    >
+                      {itineraryLoading ? 'Generating your itinerary…' : '✓ Confirm & generate itinerary'}
+                    </button>
+                  </div>
+                )}
+
+                {planGenerated && planDirty && (
                   <div className={styles.dirtyBanner}>
                     <span className={styles.dirtyText}>You've moved a stop — the written plan below is out of date.</span>
                     <button
@@ -1264,50 +1330,54 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
               </div>
             )}
 
-            <div className={styles.chat} ref={chatRef}>
-              {messages.map((m, i) => (
-                <div key={i} className={`${styles.msg} ${m.role === 'user' ? styles.msgUser : styles.msgBot}`}>
-                  <div className={styles.msgBubble}>
-                    {m.role === 'assistant' ? renderMarkdown(m.content) : m.content}
+            {planGenerated && (
+              <>
+                <div className={styles.chat} ref={chatRef}>
+                  {messages.map((m, i) => (
+                    <div key={i} className={`${styles.msg} ${m.role === 'user' ? styles.msgUser : styles.msgBot}`}>
+                      <div className={styles.msgBubble}>
+                        {m.role === 'assistant' ? renderMarkdown(m.content) : m.content}
+                      </div>
+                    </div>
+                  ))}
+                  {itineraryLoading && (
+                    <div className={`${styles.msg} ${styles.msgBot}`}>
+                      <div className={styles.msgBubble}>
+                        <div className={styles.typingDots}><span /><span /><span /></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <form onSubmit={handleChat} className={styles.chatForm}>
+                  <input
+                    type="text"
+                    placeholder="Ask a follow-up question…"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    className={styles.chatInput}
+                    disabled={chatLoading}
+                  />
+                  <button type="submit" className={styles.chatSend} disabled={chatLoading || !input.trim()}>
+                    Send →
+                  </button>
+                </form>
+
+                {/* Bottom action bar — decision point after reviewing the itinerary */}
+                <div className={styles.bottomActions}>
+                  <p className={styles.bottomPrompt}>Happy with this plan?</p>
+                  <div className={styles.bottomBtnRow}>
+                    <button className={styles.btnSaveBig} onClick={savedId ? updateSavedItinerary : saveItinerary}>
+                      {savedId ? '💾 Update itinerary' : '💾 Save itinerary'}
+                    </button>
+                    <button className={styles.btnShareBig} onClick={shareItinerary}>🔗 Share</button>
+                    <button className={styles.btnPrintBig} onClick={() => window.print()}>🖨️ Print</button>
+                    <button className={styles.btnReplanBig} onClick={() => setStep(3)}>↺ Re-plan places</button>
+                    <button className={styles.btnRestartBig} onClick={resetAll}>+ New trip</button>
                   </div>
                 </div>
-              ))}
-              {itineraryLoading && (
-                <div className={`${styles.msg} ${styles.msgBot}`}>
-                  <div className={styles.msgBubble}>
-                    <div className={styles.typingDots}><span /><span /><span /></div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <form onSubmit={handleChat} className={styles.chatForm}>
-              <input
-                type="text"
-                placeholder="Ask a follow-up question…"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                className={styles.chatInput}
-                disabled={chatLoading}
-              />
-              <button type="submit" className={styles.chatSend} disabled={chatLoading || !input.trim()}>
-                Send →
-              </button>
-            </form>
-
-            {/* Bottom action bar — decision point after reviewing the itinerary */}
-            <div className={styles.bottomActions}>
-              <p className={styles.bottomPrompt}>Happy with this plan?</p>
-              <div className={styles.bottomBtnRow}>
-                <button className={styles.btnSaveBig} onClick={savedId ? updateSavedItinerary : saveItinerary}>
-                  {savedId ? '💾 Update itinerary' : '💾 Save itinerary'}
-                </button>
-                <button className={styles.btnShareBig} onClick={shareItinerary}>🔗 Share</button>
-                <button className={styles.btnPrintBig} onClick={() => window.print()}>🖨️ Print</button>
-                <button className={styles.btnReplanBig} onClick={() => setStep(3)}>↺ Re-plan places</button>
-                <button className={styles.btnRestartBig} onClick={resetAll}>+ New trip</button>
-              </div>
-            </div>
+              </>
+            )}
           </div>
         )}
 

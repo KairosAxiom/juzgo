@@ -539,6 +539,20 @@
 
 .dirtyText { font-size: 13px; font-weight: 600; color: #8A5A00; }
 
+.confirmBar {
+  display: flex; justify-content: center;
+  margin-bottom: 18px;
+}
+
+.btnConfirmPlan {
+  width: 100%;
+  background: #1E8E5E; color: #fff; border: none; border-radius: 999px;
+  padding: 15px 28px; font-size: 16px; font-weight: 600; cursor: pointer;
+  font-family: 'Hanken Grotesk', sans-serif; transition: background .18s;
+}
+.btnConfirmPlan:hover { background: #15734B; }
+.btnConfirmPlan:disabled { opacity: .6; cursor: not-allowed; }
+
 .btnRegen {
   background: #1E8E5E; color: #fff; border: none; border-radius: 999px;
   padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
