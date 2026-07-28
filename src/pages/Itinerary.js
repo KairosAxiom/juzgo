@@ -891,14 +891,63 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
     setMessages([{ role: 'assistant', content: `Building your ${destination} itinerary…` }]);
 
     try {
-      const res = await fetch(PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 3000, messages: [{ role: 'user', content: prompt }] }),
-      });
-      const data = await res.json();
-      const text = data.content?.[0]?.text || "Sorry, I couldn't generate your itinerary. Please try again.";
-      setMessages([{ role: 'assistant', content: text }]);
+      // Long trips (e.g. 7+ days) can exceed a single response's token ceiling,
+      // truncating the plan partway through (the "only 4 of 7 days shown" bug).
+      // So we auto-continue: if the model stops because it hit max_tokens, we
+      // send the plan-so-far back and ask it to keep going from where it left
+      // off, appending each chunk. Hard-capped at a few rounds so it can never
+      // loop indefinitely. The visible message grows with each chunk.
+      const MAX_CONTINUATIONS = 4;
+      let accumulated = '';
+      // Conversation history for the continue-loop: the original build request,
+      // then alternating assistant chunks / "continue" nudges.
+      const history = [{ role: 'user', content: prompt }];
+      let finished = false;
+
+      for (let round = 0; round <= MAX_CONTINUATIONS; round++) {
+        const res = await fetch(PROXY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages: history }),
+        });
+        const data = await res.json();
+        const chunk = data.content?.[0]?.text || '';
+        if (!chunk && accumulated === '') {
+          throw new Error('empty response');
+        }
+        accumulated += chunk;
+        // Show progress as it builds.
+        setMessages([{ role: 'assistant', content: accumulated }]);
+
+        // stop_reason "max_tokens" means the model was cut off mid-plan; any
+        // other value (end_turn, stop_sequence) means it finished naturally.
+        // Fallback: some proxy configurations don't surface stop_reason, so if
+        // it's absent we infer truncation from the chunk being large (near the
+        // token ceiling) and not ending on a natural closing line.
+        const explicitlyTruncated = data.stop_reason === 'max_tokens';
+        const stopReasonMissing = data.stop_reason == null;
+        const looksTruncated =
+          stopReasonMissing &&
+          chunk.length > 6000 && // ~4096 tokens ≈ well over 6k chars of dense prose
+          !/[.!?*"')\]]\s*$/.test(chunk.trimEnd()); // doesn't end on natural punctuation
+        if (!explicitlyTruncated && !looksTruncated) { finished = true; break; }
+
+        // Truncated — feed the plan-so-far back and ask it to continue exactly
+        // where it stopped, without repeating or re-introducing.
+        history.push({ role: 'assistant', content: accumulated });
+        history.push({
+          role: 'user',
+          content: 'Continue the itinerary exactly where you left off — do not repeat any day or heading already written, do not add a preamble, just carry straight on from the next stop through the final day. Keep the same formatting and the same travel-time phrasing rules.',
+        });
+      }
+
+      if (!accumulated) {
+        setMessages([{ role: 'assistant', content: "Sorry, I couldn't generate your itinerary. Please try again." }]);
+      } else if (!finished) {
+        // Ran out of continuation rounds — extremely long trip. Keep what we
+        // have (it's most of the plan) rather than discarding it.
+        console.warn('[Juzgo debug] Itinerary hit continuation cap — plan may be slightly incomplete on a very long trip.');
+      }
     } catch {
       setMessages([{ role: 'assistant', content: 'Something went wrong. Please try again.' }]);
     }
