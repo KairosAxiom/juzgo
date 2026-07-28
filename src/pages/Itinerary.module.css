@@ -80,6 +80,24 @@
 }
 .input:focus { border-color: #1E8E5E; }
 
+.textarea {
+  width: 100%;
+  background: #F4F8F6;
+  border: 1px solid #E2E9E5;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 15px;
+  color: #16271E;
+  outline: none;
+  font-family: 'Hanken Grotesk', sans-serif;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 56px;
+  transition: border-color .15s;
+}
+.textarea:focus { border-color: #1E8E5E; }
+.textarea::placeholder { color: #9BAAA1; }
+
 .select {
   width: 100%;
   appearance: none;

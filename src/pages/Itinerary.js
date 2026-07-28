@@ -581,6 +581,7 @@ export default function Itinerary() {
   const [perDayCount, setPerDayCount] = useState(3);
   const [interests, setInterests] = useState(['food', 'places']);
   const [mustSee, setMustSee] = useState('');
+  const [experience, setExperience] = useState('');
 
   const [recommendedPlaces, setRecommendedPlaces] = useState([]);
   const [finalPlaces, setFinalPlaces] = useState([]);
@@ -657,11 +658,16 @@ export default function Itinerary() {
     const mustSeeLine = mustSeeList.length
       ? `The traveller has specifically asked to include these places — you MUST include every one of them in the JSON output, with accurate real coordinates, "source":"user_specified" and "tier":"core": ${mustSeeList.join(', ')}.`
       : '';
+    const experienceText = experience.trim();
+    const experienceLine = experienceText
+      ? `In the traveller's own words, here's the kind of trip they want — treat this as strong steering for WHICH specific places you pick and which you leave out (favour places that fit it, skip ones that clash), on top of the interest categories above: "${experienceText}".`
+      : '';
 
     const prompt = `Recommend exactly ${targetCount} specific real places for a ${dayCount}-day trip to ${destination}, matching: ${cats || 'general sightseeing'}. The traveller plans roughly ${requestedCount} activities total at their selected pace — return more than that as bonus options (see tier rule below).
 ${arrivalLine}
 ${departureLine}
 ${accomLine}
+${experienceLine}
 ${mustSeeLine}
 
 Respond with ONLY a valid JSON array, no markdown fences, no prose. Keep every field tight — the whole array must fit in one response, so brevity matters. Each object:
@@ -855,12 +861,17 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
     const dayArchetypeLine = dayCount >= 2
       ? `Day 1 is the arrival day — keep the tone and any supplementary tips low-key, easing the traveller in. Day ${dayCount} is the departure day — assume standard hotel checkout around 11:00–12:00 and that the traveller is carrying or has stored their luggage until they leave for the airport; keep tips for this day calm and logistics-aware, and do not suggest or add any strenuous, muddy, or far-flung outdoor activity for it even in passing.`
       : '';
+    const experienceText = experience.trim();
+    const experienceToneLine = experienceText
+      ? `The traveller described the trip they want in their own words: "${experienceText}". Keep the tone, framing, and any tips aligned with this — but do NOT add places beyond the list above to satisfy it.`
+      : '';
 
     const prompt = `You are a travel guide creating a detailed day-by-day itinerary for ${destination}.
 Trip length: ${dayCount} days (${dates.from || 'flexible'} to ${dates.to || 'flexible'}). Travelers: ${travelers}. Budget: ${budget}.
 ${arrivalLine}
 ${departureLine}
 ${accomLine}
+${experienceToneLine}
 ${dayArchetypeLine}
 
 Build the itinerary using ONLY these places, in this exact order within each day — they've already been sequenced geographically to minimize backtracking, so do not reorder them:
@@ -1013,6 +1024,7 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
     setPlanDirty(false);
     setDestination('');
     setMustSee('');
+    setExperience('');
     setRecommendedPlaces([]);
     setFinalPlaces([]);
   }
@@ -1054,6 +1066,16 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
                   className={styles.input}
                 />
                 <p className={styles.hint}>Separate multiple places with commas — we'll make sure these are included.</p>
+
+                <label className={styles.label}>What kind of trip do you want? (optional)</label>
+                <textarea
+                  placeholder={`Tell us in your own words — e.g. "mostly hiking and hot springs, quiet local food, skip the big tourist crowds"`}
+                  value={experience}
+                  onChange={(e) => setExperience(e.target.value)}
+                  className={styles.textarea}
+                  rows={3}
+                />
+                <p className={styles.hint}>We'll use this to choose places that fit the experience you're after.</p>
 
                 <div className={styles.twoCol}>
                   <div>
