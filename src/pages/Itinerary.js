@@ -28,6 +28,10 @@ const UNIQUE_CATS = [
 
 const PROXY_URL = 'https://claude-proxy.kairosventure-io.workers.dev/';
 
+// Day colour palette — must stay in sync with ItineraryMap.js so the
+// editor's day dots match the map pins (Day 1 red, Day 2 green, ...).
+const DAY_COLORS = ['#E5484D', '#1E8E5E', '#2A6FDB', '#F0A500', '#8A4FD1', '#00A8A8', '#D6477A', '#5B6B62'];
+
 /* ────────────────────────────────────────────────────────────────────────
    Geo helpers — day-clustering, within-day sequencing, travel-time calc.
    None of this depends on Claude's output; it runs entirely on the lat/lng
@@ -584,6 +588,7 @@ export default function Itinerary() {
   const [placesError, setPlacesError] = useState('');
 
   const [itineraryLoading, setItineraryLoading] = useState(false);
+  const [planDirty, setPlanDirty] = useState(false); // true after a place is moved but before the written plan is regenerated
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
@@ -654,7 +659,9 @@ ${accomLine}
 ${mustSeeLine}
 
 Respond with ONLY a valid JSON array, no markdown fences, no prose. Each object:
-{"id":"slug","name":"Place name","type":"category","description":"max 20 words","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number,"tier":"core|optional","dateUncertain":boolean}
+{"id":"slug","name":"Place name","type":"category","description":"max 20 words","whyVisit":"1 sentence, max 30 words, on what makes it worth a stop","bestTime":"short phrase, e.g. 'Early morning to beat crowds' or 'Sunset'","duration":"typical visit length as a range, e.g. '1–2 hours'","trust":"michelin|unesco|tourism|tripadvisor|gem|ai","lat":number,"lng":number,"tier":"core|optional","dateUncertain":boolean}
+
+The "description" stays a punchy one-liner. "whyVisit", "bestTime", and "duration" are the richer detail a traveller reads before deciding — keep each concise and specific to THIS place (no generic filler like "a must-see for everyone"). "duration" is a rough guide only; never phrase it as an instruction.
 
 Use real, accurate coordinates for each place — this matters more than usual, since we group places into days by their coordinates afterward, not by anything you decide. "michelin" only for actual Michelin recognition, "unesco" only for actual World Heritage sites, "tourism" for official board picks, "tripadvisor" for known traveller favorites, "gem" for genuine local spots, "ai" as fallback. Favor a spatially varied set across ${destination} over clustering everything in one neighborhood, so the whole trip has enough ground to work with once we group it geographically.
 
@@ -668,7 +675,7 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
       const res = await fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 3200, messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4800, messages: [{ role: 'user', content: prompt }] }),
       });
       const data = await res.json();
       const text = data.content?.[0]?.text || '';
@@ -740,13 +747,48 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
     // onto a middle day before sequencing — see applyDayArchetypeSwaps.
     const archetypeAdjusted = applyDayArchetypeSwaps(withDays, dayCount);
     const orderedPlaces = sequencePlaces(archetypeAdjusted, dayCount);
-    const travelSegments = buildTravelSegments(orderedPlaces);
 
     setFinalPlaces(orderedPlaces);
     console.log('[Juzgo debug] Final places sent to map:', orderedPlaces);
-    console.log('[Juzgo debug] Travel segments:', travelSegments);
     window.__finalPlaces = orderedPlaces;
     setStep(4);
+    setPlanDirty(false);
+    await buildItineraryFromPlaces(orderedPlaces);
+  }
+
+  /* Moves a single place onto a different day (from the Step-4 editor), then
+     re-sequences every day geographically so the new day's stop order and
+     travel times stay correct. Does NOT re-run archetype swaps — this is a
+     deliberate user override, so we respect the day they chose. The written
+     plan is left as-is and marked dirty; the user regenerates on demand. */
+  function movePlaceToDay(placeId, newDay) {
+    const targetDay = Number(newDay);
+    setFinalPlaces((prev) => {
+      const moved = prev.map((p) => (p.id === placeId ? { ...p, day: targetDay } : p));
+      const resequenced = sequencePlaces(moved, tripDayCount());
+      window.__finalPlaces = resequenced;
+      return resequenced;
+    });
+    setPlanDirty(true);
+  }
+
+  /* Rebuilds the written itinerary from the current finalPlaces order after
+     the traveller has shuffled days around. Same prompt/logic as the initial
+     build (via buildItineraryFromPlaces) — just re-run on demand. */
+  async function regenerateItinerary() {
+    setPlanDirty(false);
+    setItineraryLoading(true);
+    await buildItineraryFromPlaces(finalPlaces);
+  }
+
+  /* Shared itinerary-prose builder used by both the initial build and the
+     "Regenerate plan" button. Takes an already-sequenced places array,
+     computes fresh travel segments from it, prompts Claude, and writes the
+     result into messages. */
+  async function buildItineraryFromPlaces(orderedPlaces) {
+    const dayCount = tripDayCount();
+    const travelSegments = buildTravelSegments(orderedPlaces);
+    console.log('[Juzgo debug] Travel segments:', travelSegments);
     setItineraryLoading(true);
 
     const placesList = orderedPlaces.map((p) => {
@@ -1161,6 +1203,65 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
 
             {finalPlaces.some((p) => p.lat && p.lng) && (
               <ItineraryMap places={finalPlaces} days={dayNumbers} />
+            )}
+
+            {/* ── Editable day-by-day stop list (reschedule) ── */}
+            {finalPlaces.length > 0 && (
+              <div className={styles.editor}>
+                <div className={styles.editorHead}>
+                  <div>
+                    <div className={styles.editorTitle}>Your stops by day</div>
+                    <div className={styles.editorHint}>Move any place to a different day, then regenerate the written plan.</div>
+                  </div>
+                </div>
+
+                {planDirty && (
+                  <div className={styles.dirtyBanner}>
+                    <span className={styles.dirtyText}>You've moved a stop — the written plan below is out of date.</span>
+                    <button
+                      className={styles.btnRegen}
+                      onClick={regenerateItinerary}
+                      disabled={itineraryLoading}
+                    >
+                      {itineraryLoading ? 'Regenerating…' : '↻ Regenerate plan'}
+                    </button>
+                  </div>
+                )}
+
+                {dayNumbers.map((day) => {
+                  const dayStops = finalPlaces.filter((p) => Number(p.day) === day);
+                  return (
+                    <div key={day} className={styles.editorDay}>
+                      <div className={styles.editorDayLabel}>
+                        <span className={styles.editorDayDot} style={{ background: DAY_COLORS[(day - 1) % DAY_COLORS.length] }} />
+                        Day {day}
+                        <span className={styles.editorDayCount}>{dayStops.length} {dayStops.length === 1 ? 'stop' : 'stops'}</span>
+                      </div>
+                      {dayStops.length === 0 ? (
+                        <div className={styles.editorEmpty}>No stops yet — move one here.</div>
+                      ) : (
+                        dayStops.map((p) => (
+                          <div key={p.id} className={styles.editorStop}>
+                            <span className={styles.editorStopName}>{p.name}</span>
+                            <label className={styles.moveWrap}>
+                              <span className={styles.moveLabel}>Move to</span>
+                              <select
+                                className={styles.moveSelect}
+                                value={day}
+                                onChange={(e) => movePlaceToDay(p.id, e.target.value)}
+                              >
+                                {dayNumbers.map((d) => (
+                                  <option key={d} value={d}>Day {d}</option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
 
             <div className={styles.chat} ref={chatRef}>
