@@ -310,6 +310,86 @@ async function geocodeCustomAdds(places, destination) {
   return result;
 }
 
+/* ── Session 30: out-of-destination place review ──
+ * Detects must-see places that fall OUTSIDE the destination's bounding box so
+ * the traveller can decide, at Step 2, whether to keep each one (as a day-trip
+ * or side-trip) or drop it before it reaches day-assignment — the fix for far
+ * places (Kyoto/Osaka/Nara added to a Tokyo trip) being wedged into
+ * destination days. All Nominatim work is sequential + fail-open. */
+
+// Centre of the destination bounding box — the reference point distances are
+// measured from. Null if bounds are absent (fail-open upstream).
+function boundsCentroid(bounds) {
+  if (!bounds) return null;
+  return { lat: (bounds.south + bounds.north) / 2, lng: (bounds.west + bounds.east) / 2 };
+}
+
+// True if a coordinate sits outside the destination box (same buffer as
+// stripOutOfBoundsCoords, so "out of destination" means the same thing in both
+// places). Bufferless callers pass the same 0.05.
+function isOutsideBounds(lat, lng, bounds, buffer = 0.05) {
+  if (!bounds) return false; // no bounds ⇒ can't judge ⇒ treat as in-destination (fail-open)
+  const inBounds =
+    lat >= bounds.south - buffer && lat <= bounds.north + buffer &&
+    lng >= bounds.west - buffer && lng <= bounds.east + buffer;
+  return !inBounds;
+}
+
+// Distance (km) below which an out-of-destination place is framed as a
+// there-and-back day-trip; above it, as an overnight side-trip. Heuristic,
+// tunable. Distinct from the region-split THRESHOLD_KM (25) in lib/regions.js.
+const DAY_TRIP_KM = 150;
+
+/*
+ * Turns a distance into a plain-language explanation of what visiting an
+ * out-of-destination place entails, so the traveller can make an informed
+ * keep/drop call. No fabricated specifics — no train line, fare, or schedule;
+ * only a rough hours-each-way figure for the far case. `destination` is
+ * interpolated so the copy reads naturally.
+ */
+function describeOutOfDest(km, destination) {
+  const rounded = Math.round(km);
+  const dest = destination || 'your destination';
+  if (km <= DAY_TRIP_KM) {
+    return {
+      kind: 'day-trip',
+      text: `About ${rounded} km from ${dest} — doable as a day-trip, there and back in a day.`,
+    };
+  }
+  const hours = km / 70; // coarse intercity average incl. access; deliberately rough
+  const roughHours = hours < 1.5 ? '1–2 hours' : `about ${Math.round(hours)} hours`;
+  return {
+    kind: 'side-trip',
+    text: `About ${rounded} km from ${dest} — roughly ${roughHours} each way. Realistically an overnight side-trip, not a day-trip; keeping it adds long transit to one of your days.`,
+  };
+}
+
+/*
+ * For each must-see name, geocodes it and — if it lands outside the
+ * destination box — returns a review entry with its distance and framing.
+ * Sequential (one Nominatim request at a time) and FAIL-OPEN: a failed geocode
+ * or absent bounds simply yields no entry for that place (treated as
+ * in-destination), never blocks Step 2. Returns [] when nothing is flagged.
+ */
+async function detectOutOfDestPlaces(mustSeeList, destination) {
+  if (!mustSeeList || mustSeeList.length === 0) return [];
+  const bounds = await fetchDestinationBounds(destination);
+  if (!bounds) return []; // can't judge without a box — fail open, flag nothing
+  const centre = boundsCentroid(bounds);
+  const flagged = [];
+  for (const rawName of mustSeeList) {
+    const name = rawName.trim();
+    if (!name) continue;
+    const coords = await geocodePlace(name, destination);
+    if (!coords) continue; // fail-open: unresolved name isn't flagged
+    if (!isOutsideBounds(coords.lat, coords.lng, bounds)) continue; // in-destination
+    const km = centre ? haversineKm(centre.lat, centre.lng, coords.lat, coords.lng) : 0;
+    const { kind, text } = describeOutOfDest(km, destination);
+    flagged.push({ name, lat: coords.lat, lng: coords.lng, km: Math.round(km), kind, text });
+  }
+  return flagged;
+}
+
 /*
  * Guarantees every place the traveller explicitly typed in Stage 1 ends up
  * in the final list, even if Claude's Stage 3 output dropped it. Does a
@@ -659,6 +739,16 @@ export default function Itinerary() {
   const [enrichment, setEnrichment] = useState(null);
   const [enrichmentLoading, setEnrichmentLoading] = useState(false);
   const [regionView, setRegionView] = useState(false);
+
+  // ── Out-of-destination review (Session 30) — must-see places that fall
+  // outside the destination box, surfaced at Step 2 so the traveller can keep
+  // (as a day-trip/side-trip) or drop each before it reaches day-assignment.
+  // `outOfDestChecks` = [{name, lat, lng, km, kind, text}]; `droppedMustSee`
+  // is the Set of names the traveller chose to drop (filtered out of the
+  // research call's must-see list). All fail-open — empty ⇒ no panel shows.
+  const [outOfDestChecks, setOutOfDestChecks] = useState([]);
+  const [outOfDestLoading, setOutOfDestLoading] = useState(false);
+  const [droppedMustSee, setDroppedMustSee] = useState(() => new Set());
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
@@ -684,8 +774,48 @@ export default function Itinerary() {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages]);
 
+  // On entering Step 2, check whether any must-see place (typed at Step 1)
+  // falls outside the destination — if so, surface it for keep/drop before the
+  // research call. Fail-open: geocode/bounds trouble ⇒ empty ⇒ no panel. Reads
+  // must-see fresh each time Step 2 opens so edits at Step 1 are reflected.
+  useEffect(() => {
+    if (step !== 2) return;
+    const names = mustSee.split(',').map((s) => s.trim()).filter(Boolean);
+    if (names.length === 0 || !destination.trim()) {
+      setOutOfDestChecks([]);
+      return;
+    }
+    let cancelled = false;
+    setOutOfDestLoading(true);
+    detectOutOfDestPlaces(names, destination)
+      .then((flagged) => {
+        if (cancelled) return;
+        setOutOfDestChecks(flagged);
+        // Prune any previously-dropped names that are no longer flagged (e.g.
+        // the traveller edited the must-see list), so a stale drop can't hide
+        // a place that's now in-destination.
+        setDroppedMustSee((prev) => {
+          const stillFlagged = new Set(flagged.map((f) => f.name));
+          const next = new Set([...prev].filter((n) => stillFlagged.has(n)));
+          return next;
+        });
+      })
+      .catch(() => { if (!cancelled) setOutOfDestChecks([]); })
+      .finally(() => { if (!cancelled) setOutOfDestLoading(false); });
+    return () => { cancelled = true; };
+  }, [step, destination, mustSee]);
+
   function toggleInterest(id) {
     setInterests((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+
+  // Keep/drop toggle for an out-of-destination must-see place (Session 30).
+  function toggleDropMustSee(name) {
+    setDroppedMustSee((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
   }
 
   function tripDayCount() {
@@ -716,7 +846,10 @@ export default function Itinerary() {
     // response long enough to risk truncation/timeout on content-heavy
     // destinations (e.g. Japan). 30 keeps the payload comfortably whole.
     const targetCount = Math.min(30, Math.max(10, Math.round(requestedCount * 1.3)));
-    const mustSeeList = mustSee.split(',').map((s) => s.trim()).filter(Boolean);
+    // Must-see list, minus any out-of-destination places the traveller chose
+    // to drop at Step 2 (Session 30) — dropped names never enter the research
+    // prompt, so they're never geocoded or day-assigned downstream.
+    const mustSeeList = mustSee.split(',').map((s) => s.trim()).filter(Boolean).filter((n) => !droppedMustSee.has(n));
     const accomLine = noAccommodation
       ? 'Accommodation not yet booked — feel free to suggest a well-located area to stay.'
       : accommodation ? `Staying at: ${accommodation}.` : '';
@@ -1294,6 +1427,9 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
     setEnrichment(null);
     setEnrichmentLoading(false);
     setRegionView(false);
+    setOutOfDestChecks([]);
+    setOutOfDestLoading(false);
+    setDroppedMustSee(new Set());
   }
 
   /* Toggle between the default map+day-list and the region cards. Enrichment
@@ -1454,6 +1590,53 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
             <div className={styles.eyebrow} style={{ marginTop: 20 }}>Personalise</div>
             <h1 className={styles.h1}>What do you love?</h1>
             <p className={styles.sub}>Select your interests and we'll research places that match.</p>
+
+            {/* ── Out-of-destination review (Session 30) ── */}
+            {outOfDestLoading && (
+              <div className={styles.oodPanel}>
+                <div className={styles.oodLoading}>
+                  <span className={styles.oodSpinner} />
+                  Checking a couple of your places…
+                </div>
+              </div>
+            )}
+
+            {!outOfDestLoading && outOfDestChecks.length > 0 && (
+              <div className={styles.oodPanel}>
+                <div className={styles.oodHead}>
+                  <span className={styles.oodEyebrow}>Heads up</span>
+                  <div className={styles.oodTitle}>
+                    Some of your must-see places are outside {destination}
+                  </div>
+                  <p className={styles.oodSub}>
+                    Keep the ones you'd travel out for, or drop any you'd rather skip. Dropped places won't be added to your plan.
+                  </p>
+                </div>
+                {outOfDestChecks.map((c) => {
+                  const dropped = droppedMustSee.has(c.name);
+                  return (
+                    <div key={c.name} className={`${styles.oodRow} ${dropped ? styles.oodRowDropped : ''}`}>
+                      <div className={styles.oodRowMain}>
+                        <div className={styles.oodRowTop}>
+                          <span className={styles.oodName}>{c.name}</span>
+                          <span className={`${styles.oodTag} ${c.kind === 'side-trip' ? styles.oodTagFar : ''}`}>
+                            {c.kind === 'side-trip' ? 'Side-trip' : 'Day-trip'}
+                          </span>
+                        </div>
+                        <div className={styles.oodDesc}>{c.text}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`${styles.oodBtn} ${dropped ? styles.oodBtnDropped : ''}`}
+                        onClick={() => toggleDropMustSee(c.name)}
+                      >
+                        {dropped ? 'Keep' : 'Drop'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className={styles.catSection}>
               <div className={styles.catHeading}>Experiences</div>
