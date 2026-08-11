@@ -8,6 +8,7 @@ import ItineraryMap from '../components/ItineraryMap';
 import RegionCards from '../components/RegionCards';
 import { DAY_COLORS } from '../constants/dayColors';
 import { deriveRegions, orderRegions, interRegionConnector } from '../lib/regions';
+import { partitionByLocation, clusterPlacesByProximity, allocateDays, orderOutGroups, boundsCentroid, describeOutOfDest } from '../lib/partition';
 import styles from './Itinerary.module.css';
 
 const CATEGORIES = [
@@ -310,86 +311,6 @@ async function geocodeCustomAdds(places, destination) {
   return result;
 }
 
-/* ── Session 30: out-of-destination place review ──
- * Detects must-see places that fall OUTSIDE the destination's bounding box so
- * the traveller can decide, at Step 2, whether to keep each one (as a day-trip
- * or side-trip) or drop it before it reaches day-assignment — the fix for far
- * places (Kyoto/Osaka/Nara added to a Tokyo trip) being wedged into
- * destination days. All Nominatim work is sequential + fail-open. */
-
-// Centre of the destination bounding box — the reference point distances are
-// measured from. Null if bounds are absent (fail-open upstream).
-function boundsCentroid(bounds) {
-  if (!bounds) return null;
-  return { lat: (bounds.south + bounds.north) / 2, lng: (bounds.west + bounds.east) / 2 };
-}
-
-// True if a coordinate sits outside the destination box (same buffer as
-// stripOutOfBoundsCoords, so "out of destination" means the same thing in both
-// places). Bufferless callers pass the same 0.05.
-function isOutsideBounds(lat, lng, bounds, buffer = 0.05) {
-  if (!bounds) return false; // no bounds ⇒ can't judge ⇒ treat as in-destination (fail-open)
-  const inBounds =
-    lat >= bounds.south - buffer && lat <= bounds.north + buffer &&
-    lng >= bounds.west - buffer && lng <= bounds.east + buffer;
-  return !inBounds;
-}
-
-// Distance (km) below which an out-of-destination place is framed as a
-// there-and-back day-trip; above it, as an overnight side-trip. Heuristic,
-// tunable. Distinct from the region-split THRESHOLD_KM (25) in lib/regions.js.
-const DAY_TRIP_KM = 150;
-
-/*
- * Turns a distance into a plain-language explanation of what visiting an
- * out-of-destination place entails, so the traveller can make an informed
- * keep/drop call. No fabricated specifics — no train line, fare, or schedule;
- * only a rough hours-each-way figure for the far case. `destination` is
- * interpolated so the copy reads naturally.
- */
-function describeOutOfDest(km, destination) {
-  const rounded = Math.round(km);
-  const dest = destination || 'your destination';
-  if (km <= DAY_TRIP_KM) {
-    return {
-      kind: 'day-trip',
-      text: `About ${rounded} km from ${dest} — doable as a day-trip, there and back in a day.`,
-    };
-  }
-  const hours = km / 70; // coarse intercity average incl. access; deliberately rough
-  const roughHours = hours < 1.5 ? '1–2 hours' : `about ${Math.round(hours)} hours`;
-  return {
-    kind: 'side-trip',
-    text: `About ${rounded} km from ${dest} — roughly ${roughHours} each way. Realistically an overnight side-trip, not a day-trip; keeping it adds long transit to one of your days.`,
-  };
-}
-
-/*
- * For each must-see name, geocodes it and — if it lands outside the
- * destination box — returns a review entry with its distance and framing.
- * Sequential (one Nominatim request at a time) and FAIL-OPEN: a failed geocode
- * or absent bounds simply yields no entry for that place (treated as
- * in-destination), never blocks Step 2. Returns [] when nothing is flagged.
- */
-async function detectOutOfDestPlaces(mustSeeList, destination) {
-  if (!mustSeeList || mustSeeList.length === 0) return [];
-  const bounds = await fetchDestinationBounds(destination);
-  if (!bounds) return []; // can't judge without a box — fail open, flag nothing
-  const centre = boundsCentroid(bounds);
-  const flagged = [];
-  for (const rawName of mustSeeList) {
-    const name = rawName.trim();
-    if (!name) continue;
-    const coords = await geocodePlace(name, destination);
-    if (!coords) continue; // fail-open: unresolved name isn't flagged
-    if (!isOutsideBounds(coords.lat, coords.lng, bounds)) continue; // in-destination
-    const km = centre ? haversineKm(centre.lat, centre.lng, coords.lat, coords.lng) : 0;
-    const { kind, text } = describeOutOfDest(km, destination);
-    flagged.push({ name, lat: coords.lat, lng: coords.lng, km: Math.round(km), kind, text });
-  }
-  return flagged;
-}
-
 /*
  * Guarantees every place the traveller explicitly typed in Stage 1 ends up
  * in the final list, even if Claude's Stage 3 output dropped it. Does a
@@ -462,6 +383,98 @@ function clusterPlacesByDay(places, dayCount) {
   const withDay = valid.map((p, i) => ({ ...p, day: clusterToDay[balanced[i]] }));
   const invalidWithDay = invalid.map((p, i) => ({ ...p, day: p.day || ((i % safeDayCount) + 1) }));
   return [...withDay, ...invalidWithDay];
+}
+
+/*
+ * Session 31 — partition-then-group day assignment.
+ *
+ * Replaces the single global clusterPlacesByDay() call. Splits places into the
+ * destination vs out-of-destination groups, allocates the FIXED trip days
+ * proportionally, clusters each partition INDEPENDENTLY (so a Kyoto day never
+ * mixes with a Tokyo day), and lays the days out destination-first then each
+ * out-of-town group as its own contiguous day-block. Every place is tagged with
+ * a `regionKey` ('dest' or a per-group key like 'out-0') so the review UI and
+ * the cross-boundary move guard can reason about which block a stop belongs to.
+ *
+ * Returns { places, layout } where:
+ *   places = every input place, now with .day (1..dayCount) and .regionKey
+ *   layout = [{ key, kind:'dest'|'out', label, dayStart, dayEnd, places:[...],
+ *              centroid, framingKm }]  — ordered blocks, for the review UI
+ *
+ * Fail-open: null bounds ⇒ everything is one 'dest' block clustered exactly as
+ * before (pre-Session-31 behaviour), so a Nominatim outage can't break builds.
+ * `dropped` group indices from allocateDays are folded back into the
+ * destination (their places rejoin 'dest') so nothing is silently lost.
+ */
+function partitionAndClusterByDay(places, dayCount, bounds, destinationName) {
+  const safeDays = Math.max(1, dayCount);
+
+  // Fail-open: no bounds ⇒ single destination block, original behaviour.
+  if (!bounds) {
+    const clustered = clusterPlacesByDay(places, safeDays).map((p) => ({ ...p, regionKey: 'dest' }));
+    return {
+      places: clustered,
+      layout: [{ key: 'dest', kind: 'dest', label: destinationName || 'Main area', dayStart: 1, dayEnd: safeDays, places: clustered, centroid: null, framingKm: 0 }],
+    };
+  }
+
+  const { inDest, outDest } = partitionByLocation(places, bounds);
+  const destCentroid = boundsCentroid(bounds);
+  const outGroups = orderOutGroups(clusterPlacesByProximity(outDest), destCentroid);
+
+  // No out-of-destination places ⇒ single destination block (common case).
+  if (outGroups.length === 0) {
+    const clustered = clusterPlacesByDay(inDest, safeDays).map((p) => ({ ...p, regionKey: 'dest' }));
+    return {
+      places: clustered,
+      layout: [{ key: 'dest', kind: 'dest', label: destinationName || 'Main area', dayStart: 1, dayEnd: safeDays, places: clustered, centroid: destCentroid, framingKm: 0 }],
+    };
+  }
+
+  // Allocate the fixed days: index 0 = destination, then each out-group.
+  const sizes = [inDest.length, ...outGroups.map((g) => g.places.length)];
+  const { alloc, dropped } = allocateDays(safeDays, sizes);
+
+  // Any dropped group (more groups than days) folds its places back into the
+  // destination partition so they're never lost — they just aren't their own
+  // block. (Rare; the review UI surfaces the squeeze.)
+  const droppedSet = new Set(dropped);
+  const foldBack = [];
+  outGroups.forEach((g, gi) => { if (droppedSet.has(gi + 1)) foldBack.push(...g.places); });
+  const destPlacesInput = [...inDest, ...foldBack];
+  const keptOutGroups = outGroups.filter((_, gi) => !droppedSet.has(gi + 1));
+  const keptAlloc = alloc.filter((_, i) => i === 0 || !droppedSet.has(i)); // dest + kept groups
+  const destDays = keptAlloc[0];
+
+  // Cluster the destination block (days 1..destDays).
+  const destClustered = clusterPlacesByDay(destPlacesInput, destDays).map((p) => ({ ...p, regionKey: 'dest' }));
+
+  const layout = [{
+    key: 'dest', kind: 'dest', label: destinationName || 'Main area',
+    dayStart: 1, dayEnd: destDays, places: destClustered, centroid: destCentroid, framingKm: 0,
+  }];
+
+  // Lay out each kept out-group as a contiguous block AFTER the destination.
+  let cursor = destDays;
+  const allOut = [];
+  keptOutGroups.forEach((g, gi) => {
+    const groupDays = keptAlloc[gi + 1];
+    const key = `out-${gi}`;
+    // Cluster within the group (small N) using the same clusterer, then offset
+    // its 1..groupDays numbering to sit after the destination + prior groups.
+    const clustered = clusterPlacesByDay(g.places, groupDays).map((p) => ({
+      ...p, day: p.day + cursor, regionKey: key,
+    }));
+    const km = destCentroid ? Math.round(haversineKm(destCentroid.lat, destCentroid.lng, g.centroid.lat, g.centroid.lng)) : 0;
+    layout.push({
+      key, kind: 'out', label: null, dayStart: cursor + 1, dayEnd: cursor + groupDays,
+      places: clustered, centroid: g.centroid, framingKm: km,
+    });
+    allOut.push(...clustered);
+    cursor += groupDays;
+  });
+
+  return { places: [...destClustered, ...allOut], layout };
 }
 
 /* Total path distance in km, for evaluating 2-opt swaps */
@@ -740,15 +753,13 @@ export default function Itinerary() {
   const [enrichmentLoading, setEnrichmentLoading] = useState(false);
   const [regionView, setRegionView] = useState(false);
 
-  // ── Out-of-destination review (Session 30) — must-see places that fall
-  // outside the destination box, surfaced at Step 2 so the traveller can keep
-  // (as a day-trip/side-trip) or drop each before it reaches day-assignment.
-  // `outOfDestChecks` = [{name, lat, lng, km, kind, text}]; `droppedMustSee`
-  // is the Set of names the traveller chose to drop (filtered out of the
-  // research call's must-see list). All fail-open — empty ⇒ no panel shows.
-  const [outOfDestChecks, setOutOfDestChecks] = useState([]);
-  const [outOfDestLoading, setOutOfDestLoading] = useState(false);
-  const [droppedMustSee, setDroppedMustSee] = useState(() => new Set());
+  // ── Region layout (Session 31) — the partitioned day-block structure
+  // (destination block + out-of-town group blocks) computed by
+  // partitionAndClusterByDay. Drives the Step-4 review UI (keep/drop +
+  // day-block repositioning) and lets the cross-boundary move guard know which
+  // block a stop belongs to. Recomputed whenever the chosen set changes.
+  const [regionLayout, setRegionLayout] = useState([]);
+  const [droppedGroups, setDroppedGroups] = useState(() => new Set());
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
@@ -774,48 +785,8 @@ export default function Itinerary() {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages]);
 
-  // On entering Step 2, check whether any must-see place (typed at Step 1)
-  // falls outside the destination — if so, surface it for keep/drop before the
-  // research call. Fail-open: geocode/bounds trouble ⇒ empty ⇒ no panel. Reads
-  // must-see fresh each time Step 2 opens so edits at Step 1 are reflected.
-  useEffect(() => {
-    if (step !== 2) return;
-    const names = mustSee.split(',').map((s) => s.trim()).filter(Boolean);
-    if (names.length === 0 || !destination.trim()) {
-      setOutOfDestChecks([]);
-      return;
-    }
-    let cancelled = false;
-    setOutOfDestLoading(true);
-    detectOutOfDestPlaces(names, destination)
-      .then((flagged) => {
-        if (cancelled) return;
-        setOutOfDestChecks(flagged);
-        // Prune any previously-dropped names that are no longer flagged (e.g.
-        // the traveller edited the must-see list), so a stale drop can't hide
-        // a place that's now in-destination.
-        setDroppedMustSee((prev) => {
-          const stillFlagged = new Set(flagged.map((f) => f.name));
-          const next = new Set([...prev].filter((n) => stillFlagged.has(n)));
-          return next;
-        });
-      })
-      .catch(() => { if (!cancelled) setOutOfDestChecks([]); })
-      .finally(() => { if (!cancelled) setOutOfDestLoading(false); });
-    return () => { cancelled = true; };
-  }, [step, destination, mustSee]);
-
   function toggleInterest(id) {
     setInterests((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
-  }
-
-  // Keep/drop toggle for an out-of-destination must-see place (Session 30).
-  function toggleDropMustSee(name) {
-    setDroppedMustSee((prev) => {
-      const next = new Set(prev);
-      next.has(name) ? next.delete(name) : next.add(name);
-      return next;
-    });
   }
 
   function tripDayCount() {
@@ -846,10 +817,7 @@ export default function Itinerary() {
     // response long enough to risk truncation/timeout on content-heavy
     // destinations (e.g. Japan). 30 keeps the payload comfortably whole.
     const targetCount = Math.min(30, Math.max(10, Math.round(requestedCount * 1.3)));
-    // Must-see list, minus any out-of-destination places the traveller chose
-    // to drop at Step 2 (Session 30) — dropped names never enter the research
-    // prompt, so they're never geocoded or day-assigned downstream.
-    const mustSeeList = mustSee.split(',').map((s) => s.trim()).filter(Boolean).filter((n) => !droppedMustSee.has(n));
+    const mustSeeList = mustSee.split(',').map((s) => s.trim()).filter(Boolean);
     const accomLine = noAccommodation
       ? 'Accommodation not yet booked — feel free to suggest a well-located area to stay.'
       : accommodation ? `Staying at: ${accommodation}.` : '';
@@ -916,16 +884,19 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
       const withMustSee = await ensureMustSeePlaces(sanitized, mustSeeList, destination);
 
       // Day assignment is computed here, from the coordinates Claude returned —
-      // not trusted from anything Claude said about "day" (see clusterPlacesByDay).
-      const clustered = clusterPlacesByDay(withMustSee, dayCount);
+      // not trusted from anything Claude said about "day". Session 31: partition
+      // out-of-destination places (e.g. Kyoto/Nara/Fuji added to a Tokyo trip)
+      // into their own day-blocks so no day mixes regions — see
+      // partitionAndClusterByDay.
+      const { places: clustered, layout } = partitionAndClusterByDay(withMustSee, dayCount, bounds, destination);
+      window.__lastBounds = bounds;
       console.log('[Juzgo debug] Parsed places:', parsed);
       console.log('[Juzgo debug] Destination bounds:', bounds);
-      console.log('[Juzgo debug] Must-see check:', mustSeeList.map((name) => ({
-        name, included: withMustSee.some((p) => p.name?.toLowerCase().includes(name.toLowerCase())),
-      })));
+      console.log('[Juzgo debug] Region layout:', layout.map((b) => ({ key: b.key, kind: b.kind, days: `${b.dayStart}-${b.dayEnd}`, n: b.places.length })));
       console.log('[Juzgo debug] Clustered by day:', clustered);
       window.__lastPlaces = clustered;
       setRecommendedPlaces(clustered);
+      setRegionLayout(layout);
     } catch (err) {
       setPlacesError('We had trouble researching places for this destination. Please try again.');
     }
@@ -974,23 +945,47 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
 
     // "Add your own" places from PlacePicker arrive with null coordinates.
     // Geocode them now (sequential, fail-open) so a distant one (e.g. Nara
-    // added to a Tokyo trip) has real coordinates to map and to form its own
-    // region card. A failed lookup leaves the place coordinate-less, exactly
-    // as before — see geocodeCustomAdds.
+    // added here rather than as must-see) has real coordinates — and so it's
+    // partitioned into the correct region-block below, not wedged into a
+    // destination day. See geocodeCustomAdds.
     const geocoded = await geocodeCustomAdds(chosenPlaces, destination);
 
-    // Custom (free-text) places from PlacePicker have no day yet — slot each
-    // into the lightest day. Then sequence every day's stops geographically
-    // (nearest-neighbour) and compute real travel times from that sequence,
-    // rather than asking Claude to guess either.
-    const withDays = assignMissingDays(geocoded, dayCount);
-    // Move any strenuous/outdoor places off the arrival and departure days
-    // onto a middle day before sequencing — see applyDayArchetypeSwaps.
-    const archetypeAdjusted = applyDayArchetypeSwaps(withDays, dayCount);
-    const orderedPlaces = sequencePlaces(archetypeAdjusted, dayCount);
+    // Session 31: re-partition the FINAL chosen set (research picks + custom
+    // adds) so every day is region-pure — this is what closes the "far place
+    // added in PlacePicker lands in a Tokyo day" gap, since partitioning runs
+    // on all chosen places, not just must-see. bounds is fetched once here
+    // (fail-open: null bounds ⇒ single destination block, original behaviour).
+    const bounds = await fetchDestinationBounds(destination);
+    window.__lastBounds = bounds;
+    let { places: partitioned, layout } = partitionAndClusterByDay(geocoded, dayCount, bounds, destination);
+
+    // Honour any out-of-town groups the traveller dropped in the review: remove
+    // their places entirely and re-partition so the freed days return to the
+    // destination (D6). Dropped-group keys are matched against the layout.
+    if (droppedGroups.size > 0) {
+      const droppedPlaceIds = new Set();
+      layout.forEach((b) => { if (b.kind === 'out' && droppedGroups.has(b.key)) b.places.forEach((p) => droppedPlaceIds.add(p.id)); });
+      if (droppedPlaceIds.size > 0) {
+        const kept = geocoded.filter((p) => !droppedPlaceIds.has(p.id));
+        ({ places: partitioned, layout } = partitionAndClusterByDay(kept, dayCount, bounds, destination));
+      }
+    }
+
+    // Archetype swaps (arrival/departure easing) apply WITHIN the destination
+    // block only — never move a far stop onto a destination day or vice-versa.
+    const destDays = layout.find((b) => b.kind === 'dest');
+    const destDayEnd = destDays ? destDays.dayEnd : dayCount;
+    const destPart = partitioned.filter((p) => p.regionKey === 'dest');
+    const outPart = partitioned.filter((p) => p.regionKey !== 'dest');
+    const destAdjusted = applyDayArchetypeSwaps(destPart, destDayEnd);
+
+    // Sequence within every day (both blocks); regionKey + day are preserved.
+    const orderedPlaces = sequencePlaces([...destAdjusted, ...outPart], dayCount);
 
     setFinalPlaces(orderedPlaces);
+    setRegionLayout(layout);
     console.log('[Juzgo debug] Final places sent to map:', orderedPlaces);
+    console.log('[Juzgo debug] Region layout:', layout.map((b) => ({ key: b.key, kind: b.kind, days: `${b.dayStart}-${b.dayEnd}`, n: b.places.length })));
     window.__finalPlaces = orderedPlaces;
     setStep(4);
     setPlanDirty(false);
@@ -1148,19 +1143,110 @@ CRITICAL rules:
     await buildItineraryFromPlaces(finalPlaces);
   }
 
+  /* Which region block a given day belongs to, per the current layout — used to
+     stop a per-stop move from crossing a region boundary (Session 31, D7). */
+  function regionKeyForDay(day) {
+    const block = regionLayout.find((b) => day >= b.dayStart && day <= b.dayEnd);
+    return block ? block.key : 'dest';
+  }
+
   /* Moves a single place onto a different day (from the Step-4 editor), then
      re-sequences every day geographically so the new day's stop order and
      travel times stay correct. Does NOT re-run archetype swaps — this is a
      deliberate user override, so we respect the day they chose. The written
-     plan is left as-is and marked dirty; the user regenerates on demand. */
+     plan is left as-is and marked dirty; the user regenerates on demand.
+     Session 31: a move is BLOCKED if it would cross a region boundary (e.g. a
+     Kyoto stop onto a Tokyo day) — that would re-create the mixed-region days
+     this whole partition exists to prevent. Whole out-of-town day-blocks are
+     repositioned via moveRegionBlock instead. */
   function movePlaceToDay(placeId, newDay) {
     const targetDay = Number(newDay);
+    const place = finalPlaces.find((p) => p.id === placeId);
+    if (place && regionLayout.length > 0) {
+      const fromKey = place.regionKey || regionKeyForDay(Number(place.day));
+      const toKey = regionKeyForDay(targetDay);
+      if (fromKey !== toKey) {
+        window.alert("That stop belongs to a different part of your trip. To rearrange out-of-town days, move the whole day using its ↕ control — individual stops can't cross between areas.");
+        return;
+      }
+    }
     setFinalPlaces((prev) => {
       const moved = prev.map((p) => (p.id === placeId ? { ...p, day: targetDay } : p));
       const resequenced = sequencePlaces(moved, tripDayCount());
       window.__finalPlaces = resequenced;
       return resequenced;
     });
+    setPlanDirty(true);
+  }
+
+  /* Repositions a whole out-of-town day-block to start at a new day (Session 31,
+     D7). Moves every stop in the block together, shifts the intervening days to
+     make room, and keeps all blocks contiguous — so the region-pure structure
+     is preserved. Destination block can't be moved (it's the anchor). */
+  function moveRegionBlock(blockKey, newStartDay) {
+    setRegionLayout((prevLayout) => {
+      const block = prevLayout.find((b) => b.key === blockKey);
+      if (!block || block.kind !== 'out') return prevLayout;
+      const span = block.dayEnd - block.dayStart + 1;
+      const total = tripDayCount();
+      const start = Math.max(1, Math.min(Number(newStartDay), total - span + 1));
+      if (start === block.dayStart) return prevLayout;
+
+      // Rebuild day numbers: pull the block out, then reinsert its span at the
+      // new start, renumbering everything else around it while preserving each
+      // block's internal order.
+      const others = prevLayout.filter((b) => b.key !== blockKey)
+        .sort((a, b) => a.dayStart - b.dayStart);
+      // Sequence of blocks in new order by desired start position.
+      const rebuilt = [];
+      let cursor = 1;
+      const insertBlock = (b) => {
+        const s = b.dayEnd - b.dayStart + 1;
+        rebuilt.push({ ...b, dayStart: cursor, dayEnd: cursor + s - 1 });
+        cursor += s;
+      };
+      let inserted = false;
+      for (const b of others) {
+        if (!inserted && cursor >= start) { insertBlock(block); inserted = true; }
+        insertBlock(b);
+      }
+      if (!inserted) insertBlock(block);
+
+      // Apply the new day numbers to finalPlaces via each block's place ids.
+      const dayByPlaceId = {};
+      rebuilt.forEach((b) => {
+        // Map each place's OLD relative day within its block to the new range.
+        const oldStart = prevLayout.find((x) => x.key === b.key).dayStart;
+        b.places.forEach((p) => {
+          const rel = Number(p.day) - oldStart; // 0-based day offset within block
+          dayByPlaceId[p.id] = b.dayStart + rel;
+        });
+      });
+      setFinalPlaces((prev) => {
+        const moved = prev.map((p) => (dayByPlaceId[p.id] != null ? { ...p, day: dayByPlaceId[p.id] } : p));
+        const resequenced = sequencePlaces(moved, tripDayCount());
+        window.__finalPlaces = resequenced;
+        return resequenced;
+      });
+      setPlanDirty(true);
+      return rebuilt;
+    });
+  }
+
+  /* Drops an out-of-town group from the review: its places are removed and the
+     freed days return to the destination (Session 31, D6). Re-runs the build
+     from the current finalPlaces minus the dropped block's places. */
+  function dropRegionBlock(blockKey) {
+    const block = regionLayout.find((b) => b.key === blockKey);
+    if (!block || block.kind !== 'out') return;
+    setDroppedGroups((prev) => new Set(prev).add(blockKey));
+    const dropIds = new Set(block.places.map((p) => p.id));
+    const kept = finalPlaces.filter((p) => !dropIds.has(p.id));
+    const bounds = window.__lastBounds || null;
+    const { places: repartitioned, layout } = partitionAndClusterByDay(kept, tripDayCount(), bounds, destination);
+    setFinalPlaces(repartitioned);
+    setRegionLayout(layout);
+    window.__finalPlaces = repartitioned;
     setPlanDirty(true);
   }
 
@@ -1427,9 +1513,8 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
     setEnrichment(null);
     setEnrichmentLoading(false);
     setRegionView(false);
-    setOutOfDestChecks([]);
-    setOutOfDestLoading(false);
-    setDroppedMustSee(new Set());
+    setRegionLayout([]);
+    setDroppedGroups(new Set());
   }
 
   /* Toggle between the default map+day-list and the region cards. Enrichment
@@ -1591,53 +1676,6 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
             <h1 className={styles.h1}>What do you love?</h1>
             <p className={styles.sub}>Select your interests and we'll research places that match.</p>
 
-            {/* ── Out-of-destination review (Session 30) ── */}
-            {outOfDestLoading && (
-              <div className={styles.oodPanel}>
-                <div className={styles.oodLoading}>
-                  <span className={styles.oodSpinner} />
-                  Checking a couple of your places…
-                </div>
-              </div>
-            )}
-
-            {!outOfDestLoading && outOfDestChecks.length > 0 && (
-              <div className={styles.oodPanel}>
-                <div className={styles.oodHead}>
-                  <span className={styles.oodEyebrow}>Heads up</span>
-                  <div className={styles.oodTitle}>
-                    Some of your must-see places are outside {destination}
-                  </div>
-                  <p className={styles.oodSub}>
-                    Keep the ones you'd travel out for, or drop any you'd rather skip. Dropped places won't be added to your plan.
-                  </p>
-                </div>
-                {outOfDestChecks.map((c) => {
-                  const dropped = droppedMustSee.has(c.name);
-                  return (
-                    <div key={c.name} className={`${styles.oodRow} ${dropped ? styles.oodRowDropped : ''}`}>
-                      <div className={styles.oodRowMain}>
-                        <div className={styles.oodRowTop}>
-                          <span className={styles.oodName}>{c.name}</span>
-                          <span className={`${styles.oodTag} ${c.kind === 'side-trip' ? styles.oodTagFar : ''}`}>
-                            {c.kind === 'side-trip' ? 'Side-trip' : 'Day-trip'}
-                          </span>
-                        </div>
-                        <div className={styles.oodDesc}>{c.text}</div>
-                      </div>
-                      <button
-                        type="button"
-                        className={`${styles.oodBtn} ${dropped ? styles.oodBtnDropped : ''}`}
-                        onClick={() => toggleDropMustSee(c.name)}
-                      >
-                        {dropped ? 'Keep' : 'Drop'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
             <div className={styles.catSection}>
               <div className={styles.catHeading}>Experiences</div>
               <div className={styles.catGrid}>
@@ -1788,6 +1826,65 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
                     </div>
                   </div>
                 </div>
+
+                {/* ── Region-block review (Session 31) ── */}
+                {regionLayout.filter((b) => b.kind === 'out').length > 0 && (
+                  <div className={styles.regionReview}>
+                    <div className={styles.regionReviewHead}>
+                      <span className={styles.regionReviewEyebrow}>Your trip splits into areas</span>
+                      <p className={styles.regionReviewSub}>
+                        Some of your places are outside {destination}, so they've been grouped into their own days. Keep them, drop any you'd rather skip (those days return to {destination}), or move an out-of-town day to a different slot.
+                      </p>
+                    </div>
+                    {regionLayout.map((b) => {
+                      const isOut = b.kind === 'out';
+                      const dayRange = b.dayStart === b.dayEnd ? `Day ${b.dayStart}` : `Days ${b.dayStart}–${b.dayEnd}`;
+                      const framing = isOut ? describeOutOfDest(b.framingKm, destination) : null;
+                      const label = isOut
+                        ? b.places.map((p) => p.name).slice(0, 3).join(', ') + (b.places.length > 3 ? '…' : '')
+                        : destination;
+                      return (
+                        <div key={b.key} className={`${styles.regionBlock} ${isOut ? styles.regionBlockOut : ''}`}>
+                          <div className={styles.regionBlockMain}>
+                            <div className={styles.regionBlockTop}>
+                              <span className={styles.regionBlockRange}>{dayRange}</span>
+                              {isOut && (
+                                <span className={`${styles.regionBlockTag} ${framing.kind === 'side-trip' ? styles.regionBlockTagFar : ''}`}>
+                                  {framing.kind === 'side-trip' ? 'Side-trip' : 'Day-trip'}
+                                </span>
+                              )}
+                            </div>
+                            <div className={styles.regionBlockLabel}>{isOut ? label : `${destination} (main)`}</div>
+                            {isOut && <div className={styles.regionBlockDesc}>{framing.text}</div>}
+                          </div>
+                          {isOut && !planGenerated && (
+                            <div className={styles.regionBlockActions}>
+                              <label className={styles.regionMoveWrap}>
+                                <span className={styles.regionMoveLabel}>Start on</span>
+                                <select
+                                  className={styles.moveSelect}
+                                  value={b.dayStart}
+                                  onChange={(e) => moveRegionBlock(b.key, e.target.value)}
+                                >
+                                  {dayNumbers.map((d) => (
+                                    <option key={d} value={d}>Day {d}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                className={styles.regionDropBtn}
+                                onClick={() => dropRegionBlock(b.key)}
+                              >
+                                Drop
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {!planGenerated && (
                   <div className={styles.confirmBar}>
