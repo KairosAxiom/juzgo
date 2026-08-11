@@ -1,0 +1,139 @@
+/* RegionCards.module.css — Juzgo tokens, matched to PlacePicker/ItineraryMap */
+
+.wrap { margin-bottom: 28px; display: flex; flex-direction: column; }
+
+/* ── Loading ── */
+.loadingRow {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; color: #5B6B62; font-weight: 600;
+  padding: 12px 4px; font-family: 'Hanken Grotesk', sans-serif;
+}
+.spinner {
+  width: 18px; height: 18px; flex-shrink: 0;
+  border: 2px solid #E2E9E5; border-top-color: #1E8E5E;
+  border-radius: 50%; animation: rc-spin .8s linear infinite;
+}
+@keyframes rc-spin { to { transform: rotate(360deg); } }
+
+/* ── Region card ── */
+.card {
+  background: #fff; border: 1px solid #E2E9E5; border-radius: 18px;
+  padding: 22px 24px; margin-bottom: 4px;
+}
+
+.cardHead {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 14px; margin-bottom: 18px;
+  padding-bottom: 16px; border-bottom: 1px solid #EEF3F0;
+}
+
+.regionEyebrow {
+  font-family: 'DM Mono', monospace; font-size: 11px;
+  letter-spacing: .14em; text-transform: uppercase; color: #6A7A70;
+  margin-bottom: 6px;
+}
+
+.regionName {
+  font-family: 'Newsreader', serif; font-weight: 500;
+  font-size: 24px; letter-spacing: -.01em; color: #16271E; margin: 0;
+}
+
+.placeCount {
+  font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .06em;
+  color: #6A7A70; white-space: nowrap; padding-top: 4px;
+}
+
+/* ── Day sub-section ── */
+.dayBlock { margin-bottom: 18px; }
+.dayBlock:last-of-type { margin-bottom: 0; }
+
+.dayLabel {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; color: #16271E; margin-bottom: 10px;
+  font-family: 'Hanken Grotesk', sans-serif;
+}
+.dayDot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+.stopList {
+  list-style: none; margin: 0; padding: 0 0 0 4px;
+  border-left: 2px solid #EEF3F0; margin-left: 4px;
+}
+
+.stop {
+  position: relative; padding: 0 0 14px 16px;
+}
+.stop:last-child { padding-bottom: 0; }
+.stop::before {
+  content: ''; position: absolute; left: -5px; top: 5px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #fff; border: 2px solid #CFD9D3;
+}
+
+.stopMain {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px;
+}
+.stopName {
+  font-size: 15px; font-weight: 700; color: #16271E; line-height: 1.35;
+  font-family: 'Hanken Grotesk', sans-serif;
+}
+.price {
+  flex-shrink: 0; font-family: 'DM Mono', monospace; font-size: 12px;
+  color: #15734B; background: #EAF4EE; border-radius: 999px;
+  padding: 3px 10px; white-space: nowrap;
+}
+
+.whyLine {
+  font-size: 13px; line-height: 1.5; color: #5B6B62; margin-top: 4px;
+}
+
+.hop {
+  display: flex; align-items: center; gap: 6px;
+  font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .02em;
+  color: #6A7A70; margin-top: 7px;
+}
+.hopArrow { color: #1E8E5E; font-weight: 700; }
+
+/* ── Eat / stay ── */
+.localRow {
+  display: flex; flex-wrap: wrap; gap: 18px;
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid #EEF3F0;
+}
+.localItem { display: flex; gap: 10px; align-items: flex-start; flex: 1; min-width: 220px; }
+.localMark {
+  flex-shrink: 0; width: 30px; height: 30px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Newsreader', serif; font-size: 16px;
+  background: #F1F6F3; color: #1E8E5E;
+}
+.localLabel {
+  font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: #6A7A70; margin-bottom: 3px;
+}
+.localText { font-size: 13px; line-height: 1.5; color: #3A4A41; }
+
+/* ── Inter-region connector ── */
+.connector { padding: 6px 0 6px 24px; }
+.connectorBody {
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.connectorIcon {
+  flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #EAF1FB; color: #2A6FDB; font-size: 13px; font-weight: 700;
+}
+.connectorMain {
+  font-size: 13px; line-height: 1.5; color: #3A4A41; font-weight: 600;
+  font-family: 'Hanken Grotesk', sans-serif;
+}
+.connectorHedge {
+  font-size: 12px; line-height: 1.5; color: #6A7A70; margin-top: 3px;
+}
+.connectorRule { display: none; }
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  .card { padding: 18px; border-radius: 14px; }
+  .regionName { font-size: 21px; }
+  .localItem { min-width: 100%; }
+}

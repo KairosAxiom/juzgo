@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import styles from './ItineraryMap.module.css';
-
-// Day colour palette — Day 1 red, Day 2 green, Day 3 blue, etc.
-const DAY_COLORS = ['#E5484D', '#1E8E5E', '#2A6FDB', '#F0A500', '#8A4FD1', '#00A8A8', '#D6477A', '#5B6B62'];
+import { DAY_COLORS } from '../constants/dayColors';
 
 function toNum(v) {
   const n = typeof v === 'string' ? parseFloat(v) : v;

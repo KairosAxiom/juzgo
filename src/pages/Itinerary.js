@@ -5,6 +5,9 @@ import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
 import PlacePicker from '../components/PlacePicker';
 import ItineraryMap from '../components/ItineraryMap';
+import RegionCards from '../components/RegionCards';
+import { DAY_COLORS } from '../constants/dayColors';
+import { deriveRegions, orderRegions, interRegionConnector } from '../lib/regions';
 import styles from './Itinerary.module.css';
 
 const CATEGORIES = [
@@ -27,10 +30,6 @@ const UNIQUE_CATS = [
 ];
 
 const PROXY_URL = 'https://claude-proxy.kairosventure-io.workers.dev/';
-
-// Day colour palette — must stay in sync with ItineraryMap.js so the
-// editor's day dots match the map pins (Day 1 red, Day 2 green, ...).
-const DAY_COLORS = ['#E5484D', '#1E8E5E', '#2A6FDB', '#F0A500', '#8A4FD1', '#00A8A8', '#D6477A', '#5B6B62'];
 
 /* ────────────────────────────────────────────────────────────────────────
    Geo helpers — day-clustering, within-day sequencing, travel-time calc.
@@ -198,6 +197,14 @@ async function fetchDestinationBounds(destination) {
   }
 }
 
+/* True for a place the traveller explicitly named (Stage-1 must-see, which
+   carries source==='user_specified', or a PlacePicker "add your own", which
+   carries isCustom===true). These are trusted differently by the bounds
+   strip below — see stripOutOfBoundsCoords. */
+function isUserNamedPlace(p) {
+  return p.source === 'user_specified' || p.isCustom === true;
+}
+
 /*
  * Strips coordinates from any place whose lat/lng falls outside the
  * destination's real bounding box (plus a small buffer for edge rounding).
@@ -206,10 +213,23 @@ async function fetchDestinationBounds(destination) {
  * assignment, skipped on the map, skipped in travel-time segments) instead
  * of getting force-fit into a cluster and dragging it across a border.
  * No-op if bounds couldn't be fetched — fails open rather than blocking.
+ *
+ * User-named places (Session 29, multi-region support) are EXEMPT from the
+ * tight destination box: a traveller in "Tokyo" may legitimately add Nara
+ * (~370km SW) or Mount Fuji (~100km W), and those must survive as real
+ * coordinates so they can form their own region cards rather than being
+ * treated as hallucinations. They still get a generous country-scale sanity
+ * guard so a genuinely garbage coordinate (wrong continent) is still caught.
+ * AI-returned places keep the original tight strip unchanged — catching
+ * coordinate hallucinations is that strip's entire purpose.
  */
 function stripOutOfBoundsCoords(places, bounds) {
   if (!bounds) return places;
   const buffer = 0.05; // ~5km — generous for edge rounding, tight enough to still catch cross-border hallucinations
+  // Generous country-scale margin applied ONLY to user-named outliers: a few
+  // degrees beyond the destination box (~a few hundred km) tolerates a
+  // legitimately distant day-trip while still rejecting a wrong-country point.
+  const SANITY_MARGIN_DEG = 4;
   return places.map((p) => {
     if (!isValidCoord(p.lat) || !isValidCoord(p.lng)) return p;
     const lat = toNum(p.lat), lng = toNum(p.lng);
@@ -217,6 +237,22 @@ function stripOutOfBoundsCoords(places, bounds) {
       lat >= bounds.south - buffer && lat <= bounds.north + buffer &&
       lng >= bounds.west - buffer && lng <= bounds.east + buffer;
     if (inBounds) return { ...p, lat, lng };
+
+    if (isUserNamedPlace(p)) {
+      const withinSanity =
+        lat >= bounds.south - SANITY_MARGIN_DEG && lat <= bounds.north + SANITY_MARGIN_DEG &&
+        lng >= bounds.west - SANITY_MARGIN_DEG && lng <= bounds.east + SANITY_MARGIN_DEG;
+      if (withinSanity) {
+        // A trusted, deliberately-distant place (day-trip to another city).
+        // Keep its coordinates — the region logic will split it out later.
+        return { ...p, lat, lng };
+      }
+      console.warn(
+        `[Juzgo debug] Rejected user-named "${p.name}" — coordinates (${lat}, ${lng}) are wildly outside the destination even for a day-trip. Likely a bad geocode.`
+      );
+      return { ...p, lat: null, lng: null };
+    }
+
     console.warn(
       `[Juzgo debug] Rejected "${p.name}" — coordinates (${lat}, ${lng}) fall outside the destination's real geographic bounds. Likely bad coordinates from Claude.`
     );
@@ -251,6 +287,27 @@ async function geocodePlace(placeName, destination) {
   } catch {
     return null;
   }
+}
+
+/*
+ * Geocodes any PlacePicker "add your own" place (isCustom, arriving with
+ * lat/lng === null) so it can be placed on the map, clustered into a day,
+ * and — when it's a genuinely distant spot — split into its own region card
+ * (Session 29, multi-region support). Runs sequentially, one Nominatim
+ * request at a time (same discipline as ensureMustSeePlaces), on the handful
+ * of custom places at most. FAIL-OPEN: if a lookup returns null the place
+ * keeps its null coordinates and behaves exactly as before this change
+ * (listed, dropped into the lightest day, not mapped) — no regression.
+ */
+async function geocodeCustomAdds(places, destination) {
+  const result = [];
+  for (const p of places) {
+    const needsCoords = p.isCustom === true && !(isValidCoord(p.lat) && isValidCoord(p.lng));
+    if (!needsCoords) { result.push(p); continue; }
+    const coords = await geocodePlace(p.name, destination);
+    result.push(coords ? { ...p, lat: coords.lat, lng: coords.lng } : p);
+  }
+  return result;
 }
 
 /*
@@ -592,6 +649,16 @@ export default function Itinerary() {
   const [planDirty, setPlanDirty] = useState(false); // true after a place is moved but before the written plan is regenerated
   const [planGenerated, setPlanGenerated] = useState(false); // false until the user confirms edits and generates the written plan
   const [messages, setMessages] = useState([]);
+
+  // ── Region-card view (Session 29) — its OWN state slice; finalPlaces is
+  // untouched so save/restore/map are unaffected. `enrichment` holds the
+  // per-region eat/stay/getting-here + per-place price data from the
+  // confirm-time enrichment call (null until it runs; fail-open renders
+  // cards without it). `enrichmentLoading` gates the loading label.
+  // `regionView` toggles between the default map+day-list and the cards.
+  const [enrichment, setEnrichment] = useState(null);
+  const [enrichmentLoading, setEnrichmentLoading] = useState(false);
+  const [regionView, setRegionView] = useState(false);
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
@@ -772,11 +839,18 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
   async function handleBuildItinerary(chosenPlaces) {
     const dayCount = tripDayCount();
 
+    // "Add your own" places from PlacePicker arrive with null coordinates.
+    // Geocode them now (sequential, fail-open) so a distant one (e.g. Nara
+    // added to a Tokyo trip) has real coordinates to map and to form its own
+    // region card. A failed lookup leaves the place coordinate-less, exactly
+    // as before — see geocodeCustomAdds.
+    const geocoded = await geocodeCustomAdds(chosenPlaces, destination);
+
     // Custom (free-text) places from PlacePicker have no day yet — slot each
     // into the lightest day. Then sequence every day's stops geographically
     // (nearest-neighbour) and compute real travel times from that sequence,
     // rather than asking Claude to guess either.
-    const withDays = assignMissingDays(chosenPlaces, dayCount);
+    const withDays = assignMissingDays(geocoded, dayCount);
     // Move any strenuous/outdoor places off the arrival and departure days
     // onto a middle day before sequencing — see applyDayArchetypeSwaps.
     const archetypeAdjusted = applyDayArchetypeSwaps(withDays, dayCount);
@@ -796,12 +870,148 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
     // about to change.
   }
 
+  /*
+   * Enrichment call (Session 29) — a SEPARATE, confirm-time Claude call that
+   * produces the extra detail the region cards show: a per-region "where to
+   * eat" and "where to stay" line, an optional hedged "getting here" note,
+   * and a per-place price ONLY for well-known fixed-fee ticketed venues.
+   *
+   * Independent of the prose build (buildItineraryFromPlaces). Writes only
+   * into the `enrichment` slice; finalPlaces is never mutated. FAIL-OPEN
+   * throughout: any error, empty parse, or missing field leaves enrichment
+   * as-is (or null) and the cards render from finalPlaces alone.
+   *
+   * PRICE GATING is the key safety mechanism: with no live web access, the
+   * model must only surface a price when it's a genuinely well-known fixed
+   * admission (park gate, cable car, scenic-area ticket, museum). Everything
+   * else — restaurants, streets, viewpoints, free temples — must come back
+   * isPaidAttraction:false, price:null. The prompt states this explicitly and
+   * the renderer shows a price only when isPaidAttraction is true.
+   */
+  async function runEnrichment(placesForEnrichment) {
+    const places = placesForEnrichment || [];
+    if (places.length === 0) return;
+    setEnrichmentLoading(true);
+    try {
+      const regions = orderRegions(deriveRegions(places));
+      if (regions.length === 0) { setEnrichmentLoading(false); return; }
+
+      // Compact per-region payload: name-hint (day range), its places, and the
+      // ordered region list so the model can offer hedged inter-region hints.
+      const regionBlocks = regions.map((r) => {
+        const rp = places
+          .filter((p) => r.days.includes(Number(p.day)))
+          .map((p) => `    - id:${p.id} | ${p.name} (${p.type}, Day ${p.day})${p.whyVisit ? ` — ${p.whyVisit}` : ''}`)
+          .join('\n');
+        return `Region ${r.key} (Days ${r.days.join(', ')}):\n${rp}`;
+      }).join('\n\n');
+
+      const regionOrderLine = regions.map((r) => r.key).join(' → ');
+
+      const prompt = `You are enriching a ${destination} travel itinerary that has already been organised into geographic regions. For EACH region below, provide local dining and lodging guidance and, where applicable, ticket prices — as STRICT JSON only.
+
+Regions (in travel order: ${regionOrderLine}):
+
+${regionBlocks}
+
+Return ONLY a JSON object, no prose, no markdown fences, in exactly this shape:
+{
+  "regions": [
+    {
+      "key": "<the region key exactly as given, e.g. d1-3>",
+      "name": "<a short human region name you infer, e.g. Central Tokyo or Mount Fuji>",
+      "eat": ["<2-3 specific dishes or food spots to seek out in this region>"],
+      "stay": "<one short line: the best area/neighbourhood to base yourself in this region>",
+      "gettingHere": "<for regions AFTER the first: ONE hedged line on getting here from the previous region — general mode + rough duration only, phrased as guidance to verify. For the first region use null.>",
+      "places": [
+        { "id": "<place id exactly as given>", "isPaidAttraction": <true|false>, "price": "<e.g. ¥1000 / SGD 12, or null>" }
+      ]
+    }
+  ]
+}
+
+CRITICAL rules:
+- PRICE GATING: set isPaidAttraction:true and give a price ONLY when the place is a well-known, fixed-fee ticketed venue — a park gate, cable car, scenic-area ticket, or museum admission whose price is genuinely established. For restaurants, streets, markets, viewpoints, free temples/shrines, or anything whose fee you are not confident about, set isPaidAttraction:false and price:null. Never guess a price. When unsure, isPaidAttraction:false.
+- gettingHere: NEVER name a specific train line, service, platform, or fare, and NEVER quote a schedule. Give only a general mode (train/bus/car) and a rough duration, phrased so the traveller knows to verify (e.g. "usually reached by train, about 2 hours — check current schedules"). Null for the first region.
+- Include every place id given for a region in that region's "places" array.
+- Output valid JSON only — no commentary, no code fences.`;
+
+      const res = await fetch(PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2048, messages: [{ role: 'user', content: prompt }] }),
+      });
+      const data = await res.json();
+      const text = data.content?.[0]?.text || '';
+      const parsed = parseEnrichmentJSON(text);
+      if (parsed && Array.isArray(parsed.regions) && parsed.regions.length > 0) {
+        // Index by region key for O(1) lookup in the renderer; also index the
+        // per-place price by id for the same reason.
+        const byRegion = {};
+        const priceById = {};
+        parsed.regions.forEach((rg) => {
+          if (!rg || !rg.key) return;
+          byRegion[rg.key] = {
+            name: typeof rg.name === 'string' ? rg.name : null,
+            eat: Array.isArray(rg.eat) ? rg.eat.filter((x) => typeof x === 'string') : [],
+            stay: typeof rg.stay === 'string' ? rg.stay : null,
+            gettingHere: typeof rg.gettingHere === 'string' ? rg.gettingHere : null,
+          };
+          if (Array.isArray(rg.places)) {
+            rg.places.forEach((pl) => {
+              if (pl && pl.id && pl.isPaidAttraction === true && typeof pl.price === 'string' && pl.price.toLowerCase() !== 'null') {
+                priceById[pl.id] = pl.price;
+              }
+            });
+          }
+        });
+        setEnrichment({ byRegion, priceById });
+        console.log('[Juzgo debug] Enrichment:', { byRegion, priceById });
+      } else {
+        console.warn('[Juzgo debug] Enrichment returned no usable regions — cards will render without it.');
+      }
+    } catch (err) {
+      console.warn('[Juzgo debug] Enrichment failed (fail-open):', err);
+    }
+    setEnrichmentLoading(false);
+  }
+
+  /* Defensive JSON parse for the enrichment response: strips fences, tries a
+     straight parse, and on failure salvages the first balanced {...} object.
+     Returns null rather than throwing — the caller fails open. */
+  function parseEnrichmentJSON(text) {
+    const cleaned = (text || '').replace(/```json|```/g, '').trim();
+    try {
+      const parsed = JSON.parse(cleaned);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch { /* fall through to salvage */ }
+    const start = cleaned.indexOf('{');
+    if (start === -1) return null;
+    let depth = 0, inStr = false, esc = false, buf = '';
+    for (let i = start; i < cleaned.length; i++) {
+      const ch = cleaned[i];
+      if (esc) { buf += ch; esc = false; continue; }
+      if (ch === '\\') { buf += ch; esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; buf += ch; continue; }
+      if (inStr) { buf += ch; continue; }
+      if (ch === '{') { depth++; buf += ch; continue; }
+      if (ch === '}') {
+        depth--; buf += ch;
+        if (depth === 0) { try { return JSON.parse(buf); } catch { return null; } }
+        continue;
+      }
+      if (depth > 0) buf += ch;
+    }
+    return null;
+  }
+
   /* First-time generation, fired by the Confirm button once the traveller is
      happy with the day arrangement. Subsequent moves use the dirty/Regenerate
-     flow instead. */
+     flow instead. Enrichment runs first (fail-open), then the prose build. */
   async function confirmAndGenerate() {
     setPlanGenerated(true);
     setPlanDirty(false);
+    await runEnrichment(finalPlaces);
     await buildItineraryFromPlaces(finalPlaces);
   }
 
@@ -821,12 +1031,17 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
     setPlanDirty(true);
   }
 
-  /* Rebuilds the written itinerary from the current finalPlaces order after
-     the traveller has shuffled days around. Same prompt/logic as the initial
-     build (via buildItineraryFromPlaces) — just re-run on demand. */
+  /* Rebuilds the written itinerary AND re-runs enrichment (so the region
+     cards reflect the moved stops) from the current finalPlaces order after
+     the traveller has shuffled days around. Gated behind an explicit confirm
+     so a stray click doesn't spend two Claude calls; enrichment re-runs only
+     here, not on every individual move. */
   async function regenerateItinerary() {
+    const proceed = window.confirm('Finished moving stops — regenerate the plan and cards now?');
+    if (!proceed) return;
     setPlanDirty(false);
     setItineraryLoading(true);
+    await runEnrichment(finalPlaces);
     await buildItineraryFromPlaces(finalPlaces);
   }
 
@@ -1076,6 +1291,25 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
     setExperience('');
     setRecommendedPlaces([]);
     setFinalPlaces([]);
+    setEnrichment(null);
+    setEnrichmentLoading(false);
+    setRegionView(false);
+  }
+
+  /* Toggle between the default map+day-list and the region cards. Enrichment
+     is not persisted (save stores only prose + selected_places), so a saved
+     or restored trip arrives with enrichment === null. The FIRST time the
+     card view is opened we lazily run enrichment; fail-open leaves the cards
+     rendering from finalPlaces alone. Fresh (just-confirmed) trips already
+     have enrichment from confirmAndGenerate, so this no-ops for them. */
+  function toggleRegionView() {
+    setRegionView((prev) => {
+      const next = !prev;
+      if (next && !enrichment && !enrichmentLoading && finalPlaces.length > 0) {
+        runEnrichment(finalPlaces);
+      }
+      return next;
+    });
   }
 
   const dayCount = tripDayCount();
@@ -1322,12 +1556,44 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
               </div>
             </div>
 
-            {finalPlaces.some((p) => p.lat && p.lng) && (
+            {/* ── View toggle: map + day list  vs.  region cards ──
+                 Only offered once the plan is generated (region cards show
+                 enrichment that's only fetched at confirm-time). */}
+            {planGenerated && finalPlaces.length > 0 && (
+              <div className={styles.viewToggle}>
+                <button
+                  className={`${styles.viewToggleBtn} ${!regionView ? styles.viewToggleActive : ''}`}
+                  onClick={() => setRegionView(false)}
+                >
+                  🗺 Map &amp; days
+                </button>
+                <button
+                  className={`${styles.viewToggleBtn} ${regionView ? styles.viewToggleActive : ''}`}
+                  onClick={() => { if (!regionView) toggleRegionView(); }}
+                >
+                  🧭 By region
+                </button>
+              </div>
+            )}
+
+            {/* ── Region-card view ── */}
+            {planGenerated && regionView && finalPlaces.length > 0 && (
+              <RegionCards
+                regions={orderRegions(deriveRegions(finalPlaces))}
+                places={finalPlaces}
+                enrichment={enrichment}
+                segments={buildTravelSegments(finalPlaces)}
+                connectorFor={interRegionConnector}
+                loading={enrichmentLoading}
+              />
+            )}
+
+            {!regionView && finalPlaces.some((p) => p.lat && p.lng) && (
               <ItineraryMap places={finalPlaces} days={dayNumbers} />
             )}
 
             {/* ── Editable day-by-day stop list (reschedule) ── */}
-            {finalPlaces.length > 0 && (
+            {!regionView && finalPlaces.length > 0 && (
               <div className={styles.editor}>
                 <div className={styles.editorHead}>
                   <div>
