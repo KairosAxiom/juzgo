@@ -1,6 +1,6 @@
 # Juzgo — Living Project Context
-Last updated: July 28, 2026 (Session 28.5)
-Latest commit: 4ed6f714 — "docs: Session 28.5 context + itinerary planner decisions" (itinerary planner adjustment arc; VOIP unchanged since Session 28)
+Last updated: August 11, 2026 (Session 29)
+Latest commit: e583cf52 — "Session 29: multi-region itinerary + region-card view" (frontend only; VOIP unchanged since Session 28; docs commit to follow)
 
 **Editorial note added Session 26:** this file's main narrative below still
 ends at Session 23 — Sessions 24–25 (Airalo decisions, initial VOIP scoping)
@@ -16,6 +16,16 @@ Feature section and Key Technical Gotchas below were updated in place to
 reflect it; the full Session 28.5 log is appended at the end after Session 28.
 Itinerary-planner design decisions live in `decisions-itinerary-planner.md`
 in Project Knowledge.
+
+**Editorial note added Session 29:** Session 29 delivered multi-region
+support + a region-card view for the itinerary planner (frontend only, plus
+one new confirm-time Claude enrichment call — no VOIP/backend/schema change).
+Note the scope swap: Session 29 was *originally* planned as the VOIP
+number-inventory UI, which is now deferred to a later session (its endpoints
+are still built and waiting). The full Session 29 log is appended at the end;
+new design decisions are in `decisions-itinerary-planner.md`. Two prior
+itinerary follow-ups are now resolved (DAY_COLORS hoist; user-named-outlier
+handling for the Nominatim single-place limitation) and are marked below.
 
 ---
 
@@ -343,7 +353,7 @@ Plan My Itinerary → Plans → Terms & Conditions → Register → Login → La
 - **Twemoji:** Loaded via CDN in public/index.html with MutationObserver for React re-renders
 - **Git path:** Use Git Bash with forward slashes `/d/Kairos/juzgo`; safe.directory may need setting on new machines
 - **Nominatim rate limits:** fetchDestinationBounds/geocodePlace hit OpenStreetMap's free geocoder (no key). Rapid retries (e.g. hammering "Try again") can get throttled → intermittent "trouble researching places" errors that look destination-specific but aren't. Fails open (skips the bounds check) when unreachable.
-- **Nominatim single-place assumption:** the bounding-box guard resolves best on ONE named place. Multi-area destinations ("Around Mount Fuji and Tokyo") may return a box for only one part or an over-wide box, weakening the coordinate-hallucination guard. Not yet handled — flag if leaning into multi-area trips.
+- **Nominatim single-place assumption:** the bounding-box guard resolves best on ONE named place. Multi-area destinations ("Around Mount Fuji and Tokyo") may return a box for only one part or an over-wide box, weakening the coordinate-hallucination guard. **[Session 29 partial handling:** the box mechanism is unchanged, but places the traveller *explicitly named* (Stage-1 must-see `source==='user_specified'`, or PlacePicker "add your own" `isCustom`) are now EXEMPT from the tight destination-box strip via `isUserNamedPlace()` — they survive if within a generous ~4° country-scale sanity margin, so a real distant day-trip (Nara added to a Tokyo trip) is kept and can form its own region card. AI-returned places keep the original tight strip unchanged. This trusts explicit user input rather than trying to widen the box for multi-area phrasing, which is still unhandled.]**
 - **Itinerary research payload size:** the richer place schema (whyVisit/bestTime/duration) ~3x'd each object. At 45 places the research call ran ~78s and truncated/timed out on content-heavy destinations (Japan/Korea). Fixed by capping at 30 places + tighter field caps + salvage parser. The ~78s worker time is a lingering fragility — revisit worker-side (timeout/streaming) before raising place count again.
 - **Itinerary build truncation on long trips:** a 7+ day plan can exceed one response's token ceiling and truncate mid-plan (showed only 4 of 7 days). Build call now auto-continues on `stop_reason: max_tokens` (capped at 4 rounds). If a day-count mismatch ever recurs, check whether finalPlaces/the map has the full set first — if so, it's prose generation, not day assignment.
 - **Plans data source:** Plans.js reads Supabase countries + esim_plans DIRECTLY. Worker MOCK_PACKAGES only feeds /airalo/packages + /airalo/orders (fulfilment/QR/email), NOT the Plans page
@@ -1629,8 +1639,145 @@ Adjustment/polish arc on the AI itinerary planner, done between the VOIP work (S
 
 **Known follow-ups (not blocking):**
 - claude-proxy worker ~78s on research calls — worker-side timeout/streaming fix before raising place count. A long trip now makes 2+ sequential build calls (auto-continue), which could feel slow on that same worker; streaming is the durable fix.
-- Nominatim single-place bounding box vs multi-area destinations.
-- DAY_COLORS duplicated across two files — could hoist to a shared constants module.
+- Nominatim single-place bounding box vs multi-area destinations. **[Session 29: partially addressed — user-named places are now exempt from the destination-box strip and kept if within a country-scale sanity margin, so a deliberately-distant add (Nara from Tokyo) survives. The single-place box itself is unchanged; this trusts explicit user input rather than widening the box.]**
+- DAY_COLORS duplicated across two files — could hoist to a shared constants module. **[Session 29: DONE — hoisted to `src/constants/dayColors.js`; Itinerary.js, ItineraryMap.js, and the new RegionCards.js all import it.]**
 - Double-click IntegrationError + /attach PM-orphan (VOIP, carried from Session 28).
 
 **Next session (29):** VOIP number-inventory UI — endpoints `GET /voip/numbers`, `POST /voip/numbers/:id/release`, `POST /voip/numbers/:id/reactivate` already exist in voip.js. Pure frontend against finished endpoints.
+
+---
+
+## Session 29 — Itinerary: Multi-Region Support + Region-Card View (August 11, 2026)
+
+**Scope swap:** Session 29 was originally scoped (by the end of 28.5, see the line
+just above) as the VOIP number-inventory UI. That was **deferred** — this session
+did itinerary multi-region + a region-card view instead. The VOIP inventory
+endpoints remain built and waiting; it's next after this itinerary arc.
+
+**Frontend only**, plus one NEW confirm-time Claude call (enrichment). No backend,
+no schema, no VOIP change. Model in every proxy body remains `claude-sonnet-4-6`.
+Latest commit: `e583cf52`. Design decisions recorded in
+`decisions-itinerary-planner.md`.
+
+**Files touched:**
+- NEW `src/constants/dayColors.js` — shared DAY_COLORS (hoist).
+- NEW `src/lib/regions.js` — pure region-derivation module (+ its own haversineKm).
+- NEW `src/components/RegionCards.js` + `RegionCards.module.css` — the card view.
+- MOD `src/pages/Itinerary.js` (+277/−11), `src/pages/Itinerary.module.css` (+32,
+  strictly additive), `src/components/ItineraryMap.js` (DAY_COLORS import swap only).
+
+**The scenario driving it:** a "Tokyo" trip where the traveller also adds Mount Fuji
+(~100km W) and Nara (~370km SW) via the Stage-1 must-see field or PlacePicker
+"add your own". Desired result: three region cards — Tokyo (main, multi-day), Fuji,
+Nara — each with places/eat/stay/gated-prices, plus hedged inter-region connectors.
+
+**1. DAY_COLORS hoist (resolves a standing follow-up)**
+- Byte-identical palette lived in both Itinerary.js and ItineraryMap.js. Hoisted to
+  `src/constants/dayColors.js`; Itinerary.js, ItineraryMap.js, RegionCards.js import it.
+- Verified byte-identical pre/post — map pins do not recolour.
+
+**2. Geocode PlacePicker custom adds (B1)**
+- PlacePicker "add your own" emits `{lat:null, lng:null, isCustom:true}` and was never
+  geocoded. New `geocodeCustomAdds()` runs at the top of `handleBuildItinerary` (before
+  `assignMissingDays`), sequential one-at-a-time via the existing `geocodePlace()`,
+  FAIL-OPEN (a failed lookup leaves the place coordinate-less exactly as before).
+- PlacePicker itself is UNCHANGED — stays a pure presentational component, no network.
+
+**3. User-named outlier exemption from bounds strip (B2 — partially resolves the
+   Nominatim single-place limitation)**
+- `stripOutOfBoundsCoords` nulled anything outside the destination box (+0.05°). A real
+  distant add (Nara from Tokyo) was treated as a hallucination.
+- New `isUserNamedPlace(p)` (`source==='user_specified' || isCustom===true`) EXEMPTS
+  user-named places from the tight box; they survive if within a generous ~4°
+  country-scale sanity margin (`SANITY_MARGIN_DEG`). AI-returned places keep the
+  original tight strip unchanged (that strip's whole purpose is catching AI coord
+  hallucinations).
+
+**4. Region derivation (B3/B4/B5) — pure module `src/lib/regions.js`**
+- `deriveRegions(places, thresholdKm=25)`: per-day centroids; walk days in order
+  (they're already a nearest-neighbour geographic path from `clusterPlacesByDay`),
+  start a new region when the next day's centroid jumps > THRESHOLD_KM from the running
+  region centroid. Distant day-trips naturally split into their own region.
+- `THRESHOLD_KM = 25` — single named constant, v1 heuristic, tunable.
+- `orderRegions`: main region first (`main` = most days → most places → earliest day,
+  fully deterministic), remaining regions as a nearest-neighbour path from the main
+  centroid (closer day-trip before farther). No-centroid regions appended last.
+- `interRegionConnector`: grounded straight-line km via haversine between region
+  centroids + a HEDGED mode/time hint. Deliberately never fabricates a specific taxi
+  minute past ~80km, train line, or fare — long hops say "usually reached by train or
+  bus, ~Xh; check current schedules".
+- 21 unit tests green (the Tokyo/Fuji/Nara scenario + edge cases: no-coord day, single
+  region, ties, intra-city, empty).
+- NOTE: `regions.js` has its OWN small `haversineKm` — deliberate duplication to keep
+  the module pure/Node-testable rather than importing from the React page.
+
+**5. Enrichment call (new, confirm-time)**
+- `runEnrichment(finalPlaces)`: a SEPARATE `claude-sonnet-4-6` proxy call (same
+  PROXY_URL, no auto-continue, `max_tokens: 2048`) that returns JSON-only per-region
+  eat/stay + optional hedged "getting here" + per-place price. Own state slice
+  (`enrichment`, `enrichmentLoading`, `regionView`) — `finalPlaces` shape untouched, so
+  save/restore/map are unaffected.
+- `parseEnrichmentJSON`: defensive salvage parser (strip fences → straight parse →
+  first-balanced-object salvage), returns null → caller FAILS OPEN (cards render from
+  finalPlaces alone). 7 unit tests green.
+- **PRICE GATING (safety):** price shown ONLY when `isPaidAttraction===true` AND a
+  well-known fixed-fee ticketed venue (park gate, cable car, scenic-area ticket,
+  museum). Restaurants/streets/viewpoints/free temples → false, price null. The prompt
+  states this explicitly; the renderer only shows a price when the flag is true. With
+  no live web access, price gating + hedged transport ARE the safeguards.
+
+**6. Flow / control**
+- FIRST GEN — `confirmAndGenerate`: `runEnrichment(finalPlaces)` (fail-open) THEN
+  `buildItineraryFromPlaces` (existing prose build, unchanged).
+- MOVE STOP — `movePlaceToDay`: unchanged; sets planDirty.
+- REGENERATE — now behind a `window.confirm("Finished moving stops — regenerate the
+  plan and cards now?")` gate; on confirm re-runs enrichment THEN prose. Enrichment
+  re-runs ONLY on this explicit confirm, not per move.
+- SAVED/RESTORED — enrichment is NOT persisted (save stores only trip_data +
+  selected_places), so it runs LAZILY the first time the card view is opened
+  (`toggleRegionView`). Fail-open.
+
+**7. RegionCards render + toggle**
+- Pure renderer: parent passes regions (`orderRegions(deriveRegions(finalPlaces))`),
+  finalPlaces, enrichment, `buildTravelSegments(finalPlaces)` (intra-region hops),
+  `interRegionConnector`, loading. One card per region, main first; day-coloured
+  sub-sections (DAY_COLORS by `(day-1)%len`); per stop name → gated price → whyVisit →
+  intra-region hop; per region 吃 eat / 住 stay (hidden if enrichment absent); hedged
+  connector between cards.
+- Toggle (`🗺 Map & days` / `🧭 By region`) in the Step-4 container, visible only when
+  planGenerated. Styled with Juzgo tokens (segmented pill, matches `.dayTab`); classes
+  added additively to Itinerary.module.css and hidden in the print media query.
+
+**Verification discipline applied:** all 5 changed/new JS files JSX-parsed via esbuild
+(exit 0); full-graph bundle with real local imports resolved (no missing exports/bad
+paths); brace/paren balance checked (naive skew traced to string/regex content, matches
+original); region + enrichment-parser unit suites green (21 + 7); diffs additive-only
+(Itinerary.js +277/−11 all scoped; CSS +32, zero removed); DAY_COLORS palette proven
+byte-identical; CONTEXT.md line-count diffed against Project Knowledge copy before this
+update (1636/1636, byte-identical — no stale-overwrite).
+
+**Commit this session:**
+- `e583cf52` — "Session 29: multi-region itinerary + region-card view" (7 files, +838/−14)
+- docs commit (this CONTEXT + decisions update) to follow.
+
+**Known follow-ups (not blocking):**
+- `THRESHOLD_KM = 25` is a v1 heuristic — tune if a real trip mis-splits (e.g. a
+  sprawling metro straddling 25km, or two very-close cities merging).
+- Multi-region k-means caveat: global balanced k-means still runs across ALL coords, so
+  a lopsided place count can straddle a day across a city boundary; region grouping
+  splits at the real geographic gap regardless, but a mixed day is ugly. Acceptable for
+  v1; a "cluster within region" pass is the fix if it bites.
+- `regenerateItinerary` uses `window.confirm` (matches the app's alert-based UX); a
+  styled in-page modal would be nicer polish.
+- Enrichment runs on the same claude-proxy worker as the ~78s research call — it's a
+  smaller call (≤30 places, 2048 tokens) so far less exposed, but the worker
+  streaming/timeout fix remains the durable follow-up.
+- Nominatim multi-area *phrasing* ("Around Fuji and Tokyo" as one destination string)
+  still unhandled — Session 29 handled user-named *outlier places*, not multi-area
+  destination strings.
+- Carried from before: claude-proxy worker ~78s on research calls; double-click
+  IntegrationError + /attach PM-orphan (VOIP, from Session 28).
+
+**Next session:** VOIP number-inventory UI (deferred from this session) — endpoints
+`GET /voip/numbers`, `POST /voip/numbers/:id/release`, `POST /voip/numbers/:id/reactivate`
+already exist in voip.js. Pure frontend against finished endpoints.
