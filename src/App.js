@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import AffiliateBar from './components/AffiliateBar';
 import Home from './pages/Home';
 import Plans from './pages/Plans';
 import Login from './pages/Login';
@@ -41,6 +42,7 @@ function App() {
   return (
     <BrowserRouter>
       <Navbar />
+      <AffiliateBar />
       <Routes>
         <Route path="/"                      element={<Home />} />
         <Route path="/plans"                 element={<Plans />} />

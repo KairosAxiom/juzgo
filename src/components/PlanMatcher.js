@@ -48,6 +48,7 @@ export default function PlanMatcher({
   destinations = [],
   destination = null,
   onDestinationChange,
+  showDestinationPicker = true, // false when the host page already owns destination selection
   loading = false,
   onBuy,
   onBrowseAll,
@@ -104,30 +105,32 @@ export default function PlanMatcher({
           </h2>
         </header>
 
-        {/* Destination — SEAM 1 */}
-        <label className={styles.field}>
-          <span className={styles.label}>{t?.('matcher.destination') || 'Destination'}</span>
-          <div className={styles.selectWrap}>
-            <select
-              className={styles.select}
-              value={destination || ''}
-              onChange={(e) => onDestinationChange?.(e.target.value)}
-            >
-              <option value="" disabled>
-                {t?.('matcher.destinationPlaceholder') || 'Where are you going?'}
-              </option>
-              {destinations.map((d) => (
-                <option key={d.value} value={d.value}>
-                  {d.label}
+        {/* Destination — SEAM 1. Hidden when the host page owns destination selection. */}
+        {showDestinationPicker && (
+          <label className={styles.field}>
+            <span className={styles.label}>{t?.('matcher.destination') || 'Destination'}</span>
+            <div className={styles.selectWrap}>
+              <select
+                className={styles.select}
+                value={destination || ''}
+                onChange={(e) => onDestinationChange?.(e.target.value)}
+              >
+                <option value="" disabled>
+                  {t?.('matcher.destinationPlaceholder') || 'Where are you going?'}
                 </option>
-              ))}
-            </select>
-            <Chevron className={styles.chevron} />
-          </div>
-          <span className={styles.hint}>
-            {t?.('matcher.notchHint') || 'Options adjust to what’s available for your destination'}
-          </span>
-        </label>
+                {destinations.map((d) => (
+                  <option key={d.value} value={d.value}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+              <Chevron className={styles.chevron} />
+            </div>
+            <span className={styles.hint}>
+              {t?.('matcher.notchHint') || 'Options adjust to what’s available for your destination'}
+            </span>
+          </label>
+        )}
 
         {/* Sliders */}
         {loading && (

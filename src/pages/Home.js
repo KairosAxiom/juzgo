@@ -30,11 +30,6 @@ const ITIN_POINTS = [
   'A day-by-day plan tuned to your pace, budget and interests.',
 ];
 
-const AFFILIATES = [
-  { name: 'Klook',       url: 'https://affiliate.klook.com/redirect?aid=127608&aff_adid=1341474&k_site=https%3A%2F%2Fwww.klook.com%2F' },
-  { name: 'Expedia',     url: 'https://expedia.com/affiliate/IidJRn7' },
-];
-
 export default function Home() {
   const navigate = useNavigate();
   const { lang, t } = useLang();
@@ -161,18 +156,6 @@ export default function Home() {
           </div>
         </div>
       </section>
-
-      {/* ── Affiliate bar ── */}
-      <div className={styles.affiliateBar}>
-        <div className={styles.affiliateInner}>
-          <span className={styles.affiliateLabel}>Complete your trip — book hotels, flights &amp; activities:</span>
-          <div className={styles.affiliatePills}>
-            {AFFILIATES.map((a) => (
-              <a key={a.name} href={a.url} target="_blank" rel="noopener noreferrer" className={styles.affiliatePill}>{a.name}</a>
-            ))}
-          </div>
-        </div>
-      </div>
 
       <Footer />
     </div>

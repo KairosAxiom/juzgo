@@ -1,13 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
+import PlanMatcher from '../components/PlanMatcher';
 import styles from './Plans.module.css';
 
-const AFFILIATES = [
-  { name: 'Klook',   url: 'https://affiliate.klook.com/redirect?aid=127608&aff_adid=1341474&k_site=https%3A%2F%2Fwww.klook.com%2F' },
-  { name: 'Expedia', url: 'https://expedia.com/affiliate/IidJRn7' },
-];
 const PAGE_SIZE = 24;
 const SEARCH_BATCH_SIZE = 60; // larger single fetch when searching, so scope-grouping has enough to work with
 
@@ -162,6 +159,33 @@ export default function Plans() {
   const isUnlimited = (r) => r.data_amount?.toLowerCase() === 'unlimited';
   const canLoadMore = !search && rows.length < total;
 
+  // Adapter: normalise catalog rows into the PlanMatcher data contract.
+  // data_amount is a display string ("3 GB" / "Unlimited"); parse to a numeric
+  // GB value for the slider comparison, mapping Unlimited → Infinity so it always
+  // satisfies "covers at least". Keep the original row on `raw` so onBuy hands
+  // Checkout the exact same object handleBuy already expects.
+  const matcherPlans = useMemo(() => {
+    return rows
+      .map((r) => {
+        const unlimited = isUnlimited(r);
+        const gb = unlimited
+          ? Number.POSITIVE_INFINITY
+          : parseFloat(String(r.data_amount).replace(/[^\d.]/g, ''));
+        const days = parseInt(r.validity_days, 10);
+        const price = parseFloat(r.price_sgd);
+        return {
+          id: r.package_id,
+          data: gb,
+          days,
+          priceSgd: price,
+          label: unlimited ? 'Unlimited' : r.data_amount,
+          raw: r,
+        };
+      })
+      // Drop rows we couldn't parse into usable numbers, so sliders/sort stay sane.
+      .filter((p) => !Number.isNaN(p.data) && !Number.isNaN(p.days) && !Number.isNaN(p.priceSgd));
+  }, [rows]);
+
   // When searching with no scope filter, group results narrowest-to-broadest
   // per the agreed search UX (DECISIONS.md) rather than mixing scopes in one
   // flat list — makes it clear which results are exact-country plans vs.
@@ -250,15 +274,14 @@ export default function Plans() {
           />
         </div>
 
-        {/* Affiliate bar */}
-        <div className={styles.affiliateBar}>
-          <span className={styles.affiliateLabel}>Complete your trip — book hotels, flights &amp; activities:</span>
-          <div className={styles.affiliatePills}>
-            {AFFILIATES.map((a) => (
-              <a key={a.name} href={a.url} target="_blank" rel="noopener noreferrer" className={styles.affiliatePill}>{a.name}</a>
-            ))}
-          </div>
-        </div>
+        {/* Slider-based plan matcher — driven by the same catalog rows as the grid below */}
+        <PlanMatcher
+          plans={matcherPlans}
+          destination="catalog"
+          showDestinationPicker={false}
+          loading={loading}
+          onBuy={handleBuy}
+        />
 
         {error && <div className={styles.errorNote}>{error}</div>}
 
