@@ -1,0 +1,425 @@
+/* PlanMatcher — hero eSIM selector.
+   Palette matched to Juzgo Refresh: green #1E8E5E primary, blue #2A6FDB accent.
+   Uses global CSS custom props where they exist, with hex fallbacks so the widget
+   renders correctly even when mounted outside a page that sets them. */
+
+.matcher {
+  --pm-green: var(--color-primary, #1E8E5E);
+  --pm-green-dark: #166F49;
+  --pm-blue: var(--color-accent, #2A6FDB);
+  --pm-ink: var(--color-text, #1B2430);
+  --pm-muted: #6B7684;
+  --pm-line: #E4E8EC;
+  --pm-surface: #FFFFFF;
+  --pm-surface-soft: #F7FAF9;
+  --pm-thumb: 18px;
+
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.inner {
+  max-width: 860px;
+  margin: 0 auto;
+  background: var(--pm-surface);
+  border: 1px solid var(--pm-line);
+  border-radius: 20px;
+  padding: 28px 30px 24px;
+  box-shadow: 0 12px 40px rgba(27, 36, 48, 0.06);
+}
+
+.head {
+  margin-bottom: 22px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pm-green);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--pm-ink);
+}
+
+/* ── Fields ── */
+.field {
+  display: block;
+  margin-bottom: 26px;
+}
+
+.label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--pm-ink);
+  margin-bottom: 8px;
+}
+
+.selectWrap {
+  position: relative;
+}
+
+.select {
+  width: 100%;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 1.05rem;
+  color: var(--pm-ink);
+  background: var(--pm-surface-soft);
+  border: 1px solid var(--pm-line);
+  border-radius: 12px;
+  padding: 14px 44px 14px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.select:hover {
+  border-color: #CFD6DC;
+}
+
+.select:focus-visible {
+  outline: none;
+  border-color: var(--pm-green);
+  box-shadow: 0 0 0 3px rgba(30, 142, 94, 0.16);
+}
+
+.chevron {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--pm-muted);
+  pointer-events: none;
+}
+
+.hint {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--pm-muted);
+}
+
+/* ── Sliders ── */
+.sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  margin-bottom: 28px;
+}
+
+.ruler {
+  width: 100%;
+}
+
+.rulerHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.readout {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--pm-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.track {
+  position: relative;
+  height: var(--pm-thumb);
+}
+
+/* Native range, restyled. Thumb sized so thumbRadiusPx=9 in JS matches (~18px thumb). */
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  margin: 7px 0;
+  border-radius: 999px;
+  background: var(--pm-line);
+  cursor: pointer;
+}
+
+.range:focus-visible {
+  outline: none;
+}
+
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--pm-thumb);
+  height: var(--pm-thumb);
+  border-radius: 50%;
+  background: var(--pm-surface);
+  border: 2px solid var(--pm-green);
+  box-shadow: 0 2px 6px rgba(27, 36, 48, 0.18);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.range::-moz-range-thumb {
+  width: var(--pm-thumb);
+  height: var(--pm-thumb);
+  border-radius: 50%;
+  background: var(--pm-surface);
+  border: 2px solid var(--pm-green);
+  box-shadow: 0 2px 6px rgba(27, 36, 48, 0.18);
+}
+
+.range:hover::-webkit-slider-thumb {
+  transform: scale(1.06);
+}
+
+.range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(30, 142, 94, 0.18), 0 2px 6px rgba(27, 36, 48, 0.18);
+}
+
+.range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 4px rgba(30, 142, 94, 0.18);
+}
+
+/* Ticks — the signature: two sibling rulers with evenly-spaced notches. */
+.ticks {
+  position: relative;
+  height: 40px;
+  margin-top: 2px;
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.tickMark {
+  width: 1px;
+  height: 7px;
+  background: #C4CCD3;
+}
+
+.tickLabel {
+  font-size: 0.8rem;
+  color: var(--pm-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: color 0.12s ease, font-weight 0.12s ease;
+}
+
+.tickLabelActive {
+  color: var(--pm-ink);
+  font-weight: 700;
+}
+
+/* ── Results ── */
+.results {
+  margin-top: 4px;
+}
+
+.cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  background: var(--pm-surface-soft);
+  border: 1px solid var(--pm-line);
+  border-radius: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.card:hover {
+  border-color: #D3DBE1;
+  box-shadow: 0 6px 18px rgba(27, 36, 48, 0.06);
+}
+
+.cardMain {
+  min-width: 0;
+}
+
+.cardPlan {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--pm-ink);
+}
+
+.dot {
+  color: var(--pm-muted);
+  font-weight: 400;
+  margin: 0 2px;
+}
+
+.carriers {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--pm-muted);
+  line-height: 1.5;
+}
+
+.carriersLabel {
+  font-weight: 600;
+}
+
+.carrierTag {
+  display: inline-block;
+  background: rgba(42, 111, 219, 0.09);
+  color: var(--pm-blue);
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 0 4px 4px 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.cardBuy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.price {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--pm-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.buyBtn {
+  border: none;
+  background: var(--pm-green);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 9px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+  white-space: nowrap;
+}
+
+.buyBtn:hover {
+  background: var(--pm-green-dark);
+}
+
+.buyBtn:active {
+  transform: translateY(1px);
+}
+
+.buyBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(30, 142, 94, 0.3);
+}
+
+/* ── Empty / loading states ── */
+.empty {
+  text-align: center;
+  padding: 28px 20px;
+  background: var(--pm-surface-soft);
+  border: 1px dashed var(--pm-line);
+  border-radius: 14px;
+}
+
+.emptyTitle {
+  margin: 0 0 6px;
+  font-weight: 700;
+  color: var(--pm-ink);
+}
+
+.emptyBody {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--pm-muted);
+  max-width: 40ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.stateMsg {
+  text-align: center;
+  color: var(--pm-muted);
+  padding: 20px 0;
+}
+
+/* ── Browse-all ── */
+.browseAll {
+  display: block;
+  margin: 20px auto 0;
+  background: none;
+  border: none;
+  color: var(--pm-green);
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.browseAll:hover {
+  text-decoration: underline;
+}
+
+.browseAll:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(30, 142, 94, 0.2);
+}
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  .inner {
+    padding: 22px 18px 20px;
+    border-radius: 16px;
+  }
+
+  .title {
+    font-size: 1.2rem;
+  }
+
+  .tickLabel {
+    font-size: 0.72rem;
+  }
+
+  .card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cardBuy {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .buyBtn,
+  .range::-webkit-slider-thumb,
+  .tickLabel {
+    transition: none;
+  }
+}
