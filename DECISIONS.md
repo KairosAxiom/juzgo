@@ -74,3 +74,48 @@ and overall execution polish, not any single capability competitors lack.
 
 
 ---
+
+---
+
+## Plan-finder on /plans: sliders filter the grid, not a separate result list (Session 31)
+The slider plan-finder went through three iterations before landing. Original design was a
+standalone widget (PlanMatcher) with its own destination dropdown AND its own result cards.
+Mounted on /plans that produced two competing result lists — the matcher's cards and
+the page's existing catalog grid — showing overlapping plans in two card styles, which was
+confusing and duplicative.
+
+Decision: on /plans, the sliders (Data needed / Trip length) are a filter control
+over the existing grid, not a second list. Dragging a slider narrows the grid cards to
+plans that "cover at least" the requested data AND days. The page already owns destination
+search + scope pills + good labelled cards; the sliders add a size/duration narrowing on
+top. One result list, reusing working cards.
+
+Trigger: sliders appear only when a destination search is active (search box has text);
+empty search shows the plain browsable grid with no sliders. A "See all plans" button
+bypasses the slider filter to show the full catalog regardless of slider position.
+
+## Two components, not one over-configurable one: PlanMatcher vs PlanSliders (Session 31)
+Rather than make one component do both jobs via flags, split into two:
+- PlanSliders — sliders-only, reports values up, filters a host grid. Used on /plans.
+- PlanMatcher — standalone hero with own dropdown + own result cards. Built, committed,
+  intact, but NOT currently mounted; reserved for a possible Home-page hero ("tell us
+  the trip, we'll match a plan" -> links to /plans) where there's no existing grid to filter.
+
+Reasoning: /plans and Home have genuinely different needs (one has a grid already, one
+doesn't). A single over-configurable component accumulates prop-driven branches that fight
+each other; two focused components each stay simple. Cost is a small amount of duplicated
+slider/ruler code, accepted deliberately.
+
+## Slider notch spacing: equal-but-capped, never proportional-by-value (Session 31)
+Notches are spaced evenly (equal pixels between each), with the gap capped (~92px) so
+few-notch sliders render tight/left-aligned rather than stretching a handful of notches
+across the full panel width. Sliders with more notches naturally render wider — the two
+sliders may differ in width, which is fine.
+
+Rejected: true proportional-by-value spacing (notch position = its data value). Two
+reasons it's unusable here: (1) "Unlimited" is Infinity and has no position on a value
+axis — it literally cannot be placed proportionally; (2) proportional spacing crams the
+common small tiers (1/2/3/5 GB) into a tiny left segment and leaves a huge gap to 50 GB,
+making the most-used plans the hardest to select. Equal spacing gives every notch an equal
+click target regardless of value gaps — the whole point of a notched selector. This
+matches the original prototype's "spacing is the same" annotation.

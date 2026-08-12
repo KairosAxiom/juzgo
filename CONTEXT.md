@@ -1,6 +1,6 @@
 # Juzgo — Living Project Context
-Last updated: August 11, 2026 (Session 29)
-Latest commit: e583cf52 — "Session 29: multi-region itinerary + region-card view" (frontend only; VOIP unchanged since Session 28; docs commit to follow)
+Last updated: August 12, 2026 (Session 31)
+Latest commit: 3244d269 (Session 31 code) + f3a90aaf (repo cleanup) — see Session 31 log at end; docs commit to follow
 
 **Editorial note added Session 26:** this file's main narrative below still
 ends at Session 23 — Sessions 24–25 (Airalo decisions, initial VOIP scoping)
@@ -1781,3 +1781,98 @@ update (1636/1636, byte-identical — no stale-overwrite).
 **Next session:** VOIP number-inventory UI (deferred from this session) — endpoints
 `GET /voip/numbers`, `POST /voip/numbers/:id/release`, `POST /voip/numbers/:id/reactivate`
 already exist in voip.js. Pure frontend against finished endpoints.
+
+---
+
+## Session 31 — Plan-finder mount + storefront regression recovery
+Last updated: August 12, 2026 (Session 31)
+Latest commit: 3244d269 (code) + f3a90aaf (repo cleanup) + docs commit to follow
+
+### ⚠️ Storefront regression found and fixed (the headline of this session)
+While mounting the plan-finder on `/plans`, discovered the **real-catalog storefront
+had been silently reverted to the old dummy `esim_plans` tables** — and had been live
+in that broken state since mid-July (~4 weeks).
+
+- **Root cause:** commit `8c49ced8` ("Fix Plans.js affiliate pills: proper anchor
+  links", Jul 16) was labelled a small affiliate fix but actually did **97 insertions /
+  259 deletions** — it wiped the Session 23 catalog storefront (`6daaddd3`) back to the
+  pre-Session-23 dummy version. Classic stale-base clobber: the affiliate fix was
+  generated from an old copy of `Plans.js` and committed over the good one. Confirmed via
+  `git log -S "catalog/browse" -- src/pages/Plans.js` (added in `6daaddd3`, removed in
+  `8c49ced8`, never re-added).
+- **Blast radius — frontend only.** Backend `Server/server.js` `/catalog/browse` intact;
+  `grep -rn "esim_plans" Server/server.js` = zero. So real payments were NOT pricing off
+  dummy plans — this was a display/checkout-shape regression, not a money-correctness one.
+  `Checkout.js` reads the plan from router state, and the restored `Plans.js` `handleBuy`
+  hands it the correct catalog-shaped object, so the buy flow is consistent.
+- **Recovery:** restored `Plans.js` from `6daaddd3` (`git checkout 6daaddd3 -- ...`),
+  re-applied the two legitimate later affiliate edits (Klook/Expedia tracked URLs, anchor
+  markup), fixed a build break (see gotcha below). Commits `ef7c876` (restore) →
+  `0213ba9` (build fix). Verified live: scope pills, search, real catalog, country modal
+  all back.
+
+### Plan-finder mounted on /plans (PlanSliders)
+- New `src/components/PlanSliders.js` + `.module.css`: two notched sliders (Data needed /
+  Trip length) that report `{needData, needDays}` up to `Plans.js`, which **filters the
+  existing catalog grid** ("covers at least" data AND days) rather than rendering its own
+  result cards. Shown only when a destination search is active; hidden (grid-only) when
+  the search box is empty. A "See all plans" button bypasses the slider filter.
+- Adapter in `Plans.js` (`parsedRows`/`passesSlider`): `data_amount` display string
+  ("3 GB"/"Unlimited") -> numeric GB, Unlimited -> Infinity, `validity_days` -> int.
+  Reused for both slider notch-derivation and grid filtering.
+- Notch spacing capped at ~92px/gap (`MAX_GAP_PX`) so few-notch sliders (e.g. Data:
+  2/5/10/20/50/Unlimited) render tight and left-aligned instead of stretching across the
+  panel. Even spacing kept (NOT proportional-by-value — Unlimited has no value-axis
+  position, and proportional cramps the common small-GB tiers; see DECISIONS.md).
+
+### PlanMatcher vs PlanSliders (component split)
+- `PlanMatcher.js` (built earlier, commit `542d759`) is the **standalone hero** version:
+  own destination dropdown + own result cards. It is committed and intact but **no longer
+  mounted anywhere** — reserved for a possible future **Home-page** hero ("tell us the
+  trip, we'll match a plan" -> links to /plans). On `/plans`, where the page already owns
+  destination search + grid, the lighter `PlanSliders` (sliders-only, filters the grid)
+  is the right tool. Two components, each for its context, rather than one
+  over-configurable one.
+
+### Global affiliate bar
+- The "Complete your trip" affiliate strip moved out of individual pages into a **global
+  bar rendered from `App.js`** (between `<Navbar/>` and `<Routes>`), pinned top-right
+  under the nav on every page. Removed the in-page duplicates from `Plans.js` and
+  `Home.js` (and their now-unused local `AFFILIATES` arrays). `AffiliateBar.js` already
+  existed from June; updated it to the two correct tracked URLs (Klook/Expedia; the old
+  4-partner Tiqets/Booking list was stale). Commit `3eaa600c`.
+
+### Commits this session
+- `ef7c876` — restore real-catalog storefront (reverted by 8c49ced8)
+- `0213ba9` — build fix (remove unregistered eslint-disable rule)
+- `3eaa600c` — mount PlanMatcher (initial) + global affiliate bar
+- `d8f0a616` — fix matcher i18n key leak + gate behind active search
+- `1167e75a` — replace matcher cards with slider-filtered grid (PlanSliders)
+- `3244d269` — tighten slider notch spacing
+- `f3a90aaf` — repo cleanup (archive/remove Session-24-Scope.md from root)
+- docs commit (this update) to follow
+
+### Repo cleanup
+- Removed `Session-24-Scope.md` from repo root (archived to `D:\Kairos\_archive\`).
+  Also archived a stray `Session Scope/` folder and the temp `Plans-restored.js` there.
+  Discarded an uncommitted `AnimatedGlobe.module.css` tweak (reverted to committed).
+
+### Next session
+- VOIP number-inventory UI still deferred (endpoints in voip.js ready) — unchanged from
+  Session 29/30's queue.
+- Possible Home-page PlanMatcher hero mount (component ready).
+- Real eSIM fulfillment (Airalo API) remains THE pre-launch blocker — unchanged.
+
+### Key technical gotchas (new this session)
+- **Silent file-clobber via stale base (Session 31):** commit `8c49ced8` reverted the
+  entire catalog storefront while its message claimed a minor affiliate-pill fix, because
+  it was generated from a stale copy of the file. ALWAYS diff against the committed
+  baseline before delivering a "small" edit to a large file; a small stated intent with a
+  large +/- line count (here +97/-259) is the tell. `git log -S "<string>" -- <file>`
+  pinpoints when a feature string was added/removed.
+- **CRA eslint-as-error kills the Cloudflare build (Session 31, recurring):** an
+  `eslint-disable-next-line react-hooks/exhaustive-deps` comment referencing a rule NOT
+  registered in this project fails the production build ("Definition for rule ... was not
+  found"). Same failure as `3be1a874`. Do not add eslint-disable comments for rules not
+  in the project's config; unused vars/imports also hard-fail. esbuild JSX parse passes
+  these — only a real CRA/eslint build catches them.
