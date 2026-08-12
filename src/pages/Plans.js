@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { useLang } from '../lib/i18n';
 import Footer from '../components/Footer';
-import PlanMatcher from '../components/PlanMatcher';
+import PlanSliders from '../components/PlanSliders';
 import styles from './Plans.module.css';
 
 const PAGE_SIZE = 24;
@@ -96,9 +96,17 @@ export default function Plans() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [countryModalId, setCountryModalId] = useState(null);
+  const [sliderFilter, setSliderFilter] = useState({ needData: null, needDays: null });
+  const [showAll, setShowAll] = useState(false); // "See all plans" bypasses the slider filter
   const navigate = useNavigate();
   const { t } = useLang();
   const searchDebounce = useRef(null);
+
+  // Stable callback so PlanSliders' effect doesn't refire every render.
+  const handleSliderChange = useCallback((vals) => {
+    setSliderFilter(vals);
+    setShowAll(false); // moving a slider re-engages filtering
+  }, []);
 
   const fetchPlans = useCallback(async (targetPage, append) => {
     if (append) setLoadingMore(true); else setLoading(true);
@@ -159,32 +167,40 @@ export default function Plans() {
   const isUnlimited = (r) => r.data_amount?.toLowerCase() === 'unlimited';
   const canLoadMore = !search && rows.length < total;
 
-  // Adapter: normalise catalog rows into the PlanMatcher data contract.
-  // data_amount is a display string ("3 GB" / "Unlimited"); parse to a numeric
-  // GB value for the slider comparison, mapping Unlimited → Infinity so it always
-  // satisfies "covers at least". Keep the original row on `raw` so onBuy hands
-  // Checkout the exact same object handleBuy already expects.
-  const matcherPlans = useMemo(() => {
-    return rows
-      .map((r) => {
-        const unlimited = isUnlimited(r);
-        const gb = unlimited
-          ? Number.POSITIVE_INFINITY
-          : parseFloat(String(r.data_amount).replace(/[^\d.]/g, ''));
-        const days = parseInt(r.validity_days, 10);
-        const price = parseFloat(r.price_sgd);
-        return {
-          id: r.package_id,
-          data: gb,
-          days,
-          priceSgd: price,
-          label: unlimited ? 'Unlimited' : r.data_amount,
-          raw: r,
-        };
-      })
-      // Drop rows we couldn't parse into usable numbers, so sliders/sort stay sane.
-      .filter((p) => !Number.isNaN(p.data) && !Number.isNaN(p.days) && !Number.isNaN(p.priceSgd));
+  // Parse each catalog row's display string ("3 GB"/"Unlimited") into numeric data
+  // (Unlimited → Infinity) and days, so the sliders can derive notches and the grid
+  // can be filtered by "covers at least" the slider values. Keeps the original row.
+  const parsedRows = useMemo(() => {
+    return rows.map((r) => {
+      const unlimited = isUnlimited(r);
+      const gb = unlimited
+        ? Number.POSITIVE_INFINITY
+        : parseFloat(String(r.data_amount).replace(/[^\d.]/g, ''));
+      const days = parseInt(r.validity_days, 10);
+      return { row: r, data: gb, days };
+    });
   }, [rows]);
+
+  // Notch source for the sliders — just the numeric {data, days} pairs.
+  const sliderPlans = useMemo(
+    () => parsedRows
+      .filter((p) => !Number.isNaN(p.data) && !Number.isNaN(p.days))
+      .map((p) => ({ data: p.data, days: p.days })),
+    [parsedRows]
+  );
+
+  // Which rows pass the slider filter ("covers at least" data AND days). When showAll
+  // is on, or no slider values yet, everything passes.
+  const passesSlider = (r) => {
+    if (showAll) return true;
+    const { needData, needDays } = sliderFilter;
+    if (needData == null && needDays == null) return true;
+    const p = parsedRows.find((x) => x.row === r);
+    if (!p) return true;
+    const dataOk = needData == null || (p.data >= needData);
+    const daysOk = needDays == null || (p.days >= needDays);
+    return dataOk && daysOk;
+  };
 
   // When searching with no scope filter, group results narrowest-to-broadest
   // per the agreed search UX (DECISIONS.md) rather than mixing scopes in one
@@ -274,16 +290,37 @@ export default function Plans() {
           />
         </div>
 
-        {/* When a destination is searched, show the slider matcher above the results.
-            When the search box is empty, hide the matcher and show the browsable grid only. */}
+        {/* When a destination is searched, show the sliders to narrow the grid below.
+            When the search box is empty, hide the sliders and show the browsable grid only. */}
         {search ? (
-          <PlanMatcher
-            plans={matcherPlans}
-            destination="catalog"
-            showDestinationPicker={false}
-            loading={loading}
-            onBuy={handleBuy}
-          />
+          <div style={{
+            background: '#fff',
+            border: '1px solid #E4E8EC',
+            borderRadius: 16,
+            padding: '22px 24px 18px',
+            marginBottom: 24,
+            boxShadow: '0 8px 28px rgba(27,36,48,0.05)',
+          }}>
+            <PlanSliders plans={sliderPlans} onChange={handleSliderChange} />
+            <button
+              type="button"
+              onClick={() => setShowAll(true)}
+              disabled={showAll}
+              style={{
+                display: 'block',
+                margin: '4px auto 0',
+                background: 'none',
+                border: 'none',
+                color: showAll ? '#9AA4AE' : '#1E8E5E',
+                fontSize: '0.9rem',
+                fontWeight: 700,
+                cursor: showAll ? 'default' : 'pointer',
+                padding: '8px 12px',
+              }}
+            >
+              See all plans
+            </button>
+          </div>
         ) : null}
 
         {error && <div className={styles.errorNote}>{error}</div>}
@@ -299,28 +336,35 @@ export default function Plans() {
           </div>
         ) : grouped ? (
           <>
-            {grouped.country.length > 0 && (
+            {grouped.country.filter(passesSlider).length > 0 && (
               <>
                 <div className={styles.groupHeader}>Country plans</div>
-                <div className={styles.planGrid}>{grouped.country.map(renderCard)}</div>
+                <div className={styles.planGrid}>{grouped.country.filter(passesSlider).map(renderCard)}</div>
               </>
             )}
-            {grouped.region.length > 0 && (
+            {grouped.region.filter(passesSlider).length > 0 && (
               <>
                 <div className={styles.groupHeader}>Regional bundles covering this destination</div>
-                <div className={styles.planGrid}>{grouped.region.map(renderCard)}</div>
+                <div className={styles.planGrid}>{grouped.region.filter(passesSlider).map(renderCard)}</div>
               </>
             )}
-            {grouped.global.length > 0 && (
+            {grouped.global.filter(passesSlider).length > 0 && (
               <>
                 <div className={styles.groupHeader}>Global bundles covering this destination</div>
-                <div className={styles.planGrid}>{grouped.global.map(renderCard)}</div>
+                <div className={styles.planGrid}>{grouped.global.filter(passesSlider).map(renderCard)}</div>
               </>
             )}
+            {grouped.country.filter(passesSlider).length === 0 &&
+              grouped.region.filter(passesSlider).length === 0 &&
+              grouped.global.filter(passesSlider).length === 0 && (
+                <div className={styles.empty}>
+                  <p>No plans match those slider settings. <br />Try lowering the data or trip length, or press “See all plans”.</p>
+                </div>
+              )}
           </>
         ) : (
           <>
-            <div className={styles.planGrid}>{rows.map(renderCard)}</div>
+            <div className={styles.planGrid}>{rows.filter(passesSlider).map(renderCard)}</div>
             {canLoadMore && (
               <div className={styles.loadMoreWrap}>
                 <button className={styles.btnLoadMore} onClick={loadMore} disabled={loadingMore}>
