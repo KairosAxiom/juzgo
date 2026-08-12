@@ -274,18 +274,21 @@ export default function Plans() {
           />
         </div>
 
-        {/* Slider-based plan matcher — driven by the same catalog rows as the grid below */}
-        <PlanMatcher
-          plans={matcherPlans}
-          destination="catalog"
-          showDestinationPicker={false}
-          loading={loading}
-          onBuy={handleBuy}
-        />
+        {/* When a destination is searched, show the slider matcher above the results.
+            When the search box is empty, hide the matcher and show the browsable grid only. */}
+        {search ? (
+          <PlanMatcher
+            plans={matcherPlans}
+            destination="catalog"
+            showDestinationPicker={false}
+            loading={loading}
+            onBuy={handleBuy}
+          />
+        ) : null}
 
         {error && <div className={styles.errorNote}>{error}</div>}
 
-        {/* Plan grid */}
+        {/* Plan grid — always shown; when searching, this is the grouped view below the matcher */}
         {loading ? (
           <div className={styles.loading}>
             <div className={styles.spinner} />

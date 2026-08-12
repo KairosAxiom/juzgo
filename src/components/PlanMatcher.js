@@ -1,5 +1,4 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useLang } from '../lib/i18n';
 import styles from './PlanMatcher.module.css';
 
 /**
@@ -54,7 +53,7 @@ export default function PlanMatcher({
   onBrowseAll,
   thumbRadiusPx = 9, // match to the real styled thumb; prototype ≈ 9px
 }) {
-  const { t } = useLang();
+  // Notch derivation from the scoped catalog (build note §3): distinct values, ascending.
 
   // ── Notch derivation: DERIVED from the scoped catalog, never hardcoded (build note §3) ──
   const dataStops = useMemo(() => distinctSorted(plans, 'data'), [plans]);
@@ -96,19 +95,19 @@ export default function PlanMatcher({
   const hasStops = dataStops.length > 0 && dayStops.length > 0;
 
   return (
-    <section className={styles.matcher} aria-label={t?.('matcher.aria') || 'Find your eSIM'}>
+    <section className={styles.matcher} aria-label={'Find your eSIM'}>
       <div className={styles.inner}>
         <header className={styles.head}>
-          <p className={styles.eyebrow}>{t?.('matcher.eyebrow') || 'Find your plan'}</p>
+          <p className={styles.eyebrow}>{'Find your plan'}</p>
           <h2 className={styles.title}>
-            {t?.('matcher.title') || 'Tell us the trip. We’ll match the plan.'}
+            {'Tell us the trip. We’ll match the plan.'}
           </h2>
         </header>
 
         {/* Destination — SEAM 1. Hidden when the host page owns destination selection. */}
         {showDestinationPicker && (
           <label className={styles.field}>
-            <span className={styles.label}>{t?.('matcher.destination') || 'Destination'}</span>
+            <span className={styles.label}>{'Destination'}</span>
             <div className={styles.selectWrap}>
               <select
                 className={styles.select}
@@ -116,7 +115,7 @@ export default function PlanMatcher({
                 onChange={(e) => onDestinationChange?.(e.target.value)}
               >
                 <option value="" disabled>
-                  {t?.('matcher.destinationPlaceholder') || 'Where are you going?'}
+                  {'Where are you going?'}
                 </option>
                 {destinations.map((d) => (
                   <option key={d.value} value={d.value}>
@@ -127,7 +126,7 @@ export default function PlanMatcher({
               <Chevron className={styles.chevron} />
             </div>
             <span className={styles.hint}>
-              {t?.('matcher.notchHint') || 'Options adjust to what’s available for your destination'}
+              {'Options adjust to what’s available for your destination'}
             </span>
           </label>
         )}
@@ -135,7 +134,7 @@ export default function PlanMatcher({
         {/* Sliders */}
         {loading && (
           <p className={styles.stateMsg} role="status">
-            {t?.('matcher.loading') || 'Loading plans…'}
+            {'Loading plans…'}
           </p>
         )}
 
@@ -143,7 +142,7 @@ export default function PlanMatcher({
           <div className={styles.sliders}>
             <Ruler
               id="matcher-data"
-              title={t?.('matcher.dataNeeded') || 'Data needed'}
+              title={'Data needed'}
               readout={dataReadout}
               stops={dataStops}
               index={dataIdx}
@@ -153,7 +152,7 @@ export default function PlanMatcher({
             />
             <Ruler
               id="matcher-days"
-              title={t?.('matcher.tripLength') || 'Trip length'}
+              title={'Trip length'}
               readout={daysReadout}
               stops={dayStops}
               index={daysIdx}
@@ -170,17 +169,16 @@ export default function PlanMatcher({
             {matches.length > 0 ? (
               <ul className={styles.cards}>
                 {matches.map((p) => (
-                  <ResultCard key={p.id} plan={p} onBuy={onBuy} t={t} />
+                  <ResultCard key={p.id} plan={p} onBuy={onBuy} />
                 ))}
               </ul>
             ) : (
               <div className={styles.empty} role="status">
                 <p className={styles.emptyTitle}>
-                  {t?.('matcher.emptyTitle') || 'No plan covers that much just yet.'}
+                  {'No plan covers that much just yet.'}
                 </p>
                 <p className={styles.emptyBody}>
-                  {t?.('matcher.emptyBody') ||
-                    'Try adjusting a slider down — nudge the data or the trip length lower to see plans that fit.'}
+                  {'Try adjusting a slider down — nudge the data or the trip length lower to see plans that fit.'}
                 </p>
               </div>
             )}
@@ -190,7 +188,7 @@ export default function PlanMatcher({
         {/* Browse-all affordance */}
         {onBrowseAll && (
           <button type="button" className={styles.browseAll} onClick={onBrowseAll}>
-            {t?.('matcher.browseAll') || 'See all plans'}
+            {'See all plans'}
           </button>
         )}
       </div>
@@ -246,7 +244,7 @@ function Ruler({ id, title, readout, stops, index, onChange, formatStop, thumbRa
 
 /* ────────────────────────────── Result card ────────────────────────────── */
 
-function ResultCard({ plan, onBuy, t }) {
+function ResultCard({ plan, onBuy }) {
   const dataLabel = plan.label || `${plan.data} GB`;
   return (
     <li className={styles.card}>
@@ -256,7 +254,7 @@ function ResultCard({ plan, onBuy, t }) {
         </p>
         {plan.carriers && plan.carriers.length > 0 && (
           <p className={styles.carriers}>
-            <span className={styles.carriersLabel}>{t?.('matcher.runsOn') || 'Runs on'}:</span>{' '}
+            <span className={styles.carriersLabel}>{'Runs on'}:</span>{' '}
             {plan.carriers.map((c, i) => (
               <span key={i} className={styles.carrierTag}>
                 {c}
@@ -273,7 +271,7 @@ function ResultCard({ plan, onBuy, t }) {
           className={styles.buyBtn}
           onClick={() => onBuy?.(plan.raw ?? plan)}
         >
-          {t?.('matcher.buy') || 'Get this plan'}
+          {'Get this plan'}
         </button>
       </div>
     </li>
