@@ -27,6 +27,11 @@
   width: 100%;
 }
 
+.rulerBody {
+  /* width set inline per notch count; this keeps the track + ticks left-aligned */
+  position: relative;
+}
+
 .rulerHead {
   display: flex;
   align-items: baseline;

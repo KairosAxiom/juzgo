@@ -69,6 +69,12 @@ export default function PlanSliders({ plans = [], onChange, thumbRadiusPx = 9 })
 
 function Ruler({ id, title, readout, stops, index, onChange, formatStop, thumbRadiusPx }) {
   const max = Math.max(stops.length - 1, 0);
+  // Cap the gap between notches so a slider with few stops stays tight rather than
+  // stretching its notches across the full panel width. The track grows only as wide
+  // as its notch count needs (never past the container, hence maxWidth: 100%).
+  const MAX_GAP_PX = 92;
+  const trackWidth = max === 0 ? 120 : max * MAX_GAP_PX;
+
   return (
     <div className={styles.ruler}>
       <div className={styles.rulerHead}>
@@ -76,36 +82,39 @@ function Ruler({ id, title, readout, stops, index, onChange, formatStop, thumbRa
         <span className={styles.readout}>{readout}</span>
       </div>
 
-      <div className={styles.track}>
-        <input
-          id={id}
-          className={styles.range}
-          type="range"
-          min={0}
-          max={max}
-          step={1}
-          value={index}
-          onChange={(e) => onChange(Number(e.target.value))}
-          aria-valuetext={readout}
-          aria-label={title}
-        />
-      </div>
+      {/* Width-capped wrapper: keeps notches close together, left-aligned */}
+      <div className={styles.rulerBody} style={{ width: trackWidth, maxWidth: '100%' }}>
+        <div className={styles.track}>
+          <input
+            id={id}
+            className={styles.range}
+            type="range"
+            min={0}
+            max={max}
+            step={1}
+            value={index}
+            onChange={(e) => onChange(Number(e.target.value))}
+            aria-valuetext={readout}
+            aria-label={title}
+          />
+        </div>
 
-      {/* Evenly-spaced ticks with thumb-radius compensation */}
-      <div className={styles.ticks} aria-hidden="true">
-        {stops.map((v, i) => {
-          const pct = max === 0 ? 50 : (i / max) * 100;
-          const left = `calc(${pct}% - ${((pct - 50) / 50) * thumbRadiusPx}px)`;
-          const active = i === index;
-          return (
-            <span key={i} className={styles.tick} style={{ left }}>
-              <span className={styles.tickMark} />
-              <span className={`${styles.tickLabel} ${active ? styles.tickLabelActive : ''}`}>
-                {formatStop(v)}
+        {/* Evenly-spaced ticks with thumb-radius compensation */}
+        <div className={styles.ticks} aria-hidden="true">
+          {stops.map((v, i) => {
+            const pct = max === 0 ? 50 : (i / max) * 100;
+            const left = `calc(${pct}% - ${((pct - 50) / 50) * thumbRadiusPx}px)`;
+            const active = i === index;
+            return (
+              <span key={i} className={styles.tick} style={{ left }}>
+                <span className={styles.tickMark} />
+                <span className={`${styles.tickLabel} ${active ? styles.tickLabelActive : ''}`}>
+                  {formatStop(v)}
+                </span>
               </span>
-            </span>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
