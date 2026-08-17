@@ -1763,6 +1763,45 @@ app.get('/referral/my-stats', requireAuth, async (req, res) => {
   }
 });
 
+// ── ITINERARIES (read-only, for Alfred) ──────────────────────────────
+
+// GET /itineraries — list the authenticated user's saved trips
+app.get('/itineraries', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { data, error } = await supabase
+      .from('saved_itineraries')
+      .select('id, destination, status, created_at, updated_at')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    res.json({ itineraries: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /itineraries/:id — full detail of one trip (owner only)
+app.get('/itineraries/:id', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('saved_itineraries')
+      .select('id, destination, status, trip_data, selected_places, trip_inputs, suggested_plan_id, created_at, updated_at')
+      .eq('id', id)
+      .eq('user_id', userId)   // ownership enforced in code — service role bypasses RLS
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return res.status(404).json({ error: 'Itinerary not found' });
+      throw error;
+    }
+    res.json({ itinerary: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /referral/credit — awards SGD 2.00 wallet credit to referrer on first purchase
 async function processReferralCredit(referralCode, buyerUserId) {
   if (!referralCode || !referralCode.startsWith('USR-')) return;
