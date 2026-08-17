@@ -1436,7 +1436,7 @@ Never write a bare "Allow X mins" or suggest a dwell duration at a location.`;
     const itinText = messages.find((m) => m.role === 'assistant' && m.content.length > 100)?.content || '';
     const { error } = await supabase
       .from('saved_itineraries')
-      .update({ trip_data: itinText, selected_places: finalPlaces, created_at: new Date() })
+      .update({ trip_data: itinText, selected_places: finalPlaces, updated_at: new Date() })
       .eq('id', savedId);
     if (error) { alert(`Update failed: ${error.message}`); return; }
     alert('Itinerary updated!');
