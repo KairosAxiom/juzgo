@@ -1763,6 +1763,24 @@ app.get('/referral/my-stats', requireAuth, async (req, res) => {
   }
 });
 
+// ── AUTH: does this email already have an account? (for Alfred signup flow) ──
+// v1 RISK (logged for tightening before public launch): this is an
+// unauthenticated existence check -> enables email enumeration by a stranger.
+// Acceptable for personal v1 (not yet onboarding the public). Tighten later:
+// rate-limit per IP, or gate behind a short-lived signup-intent token.
+app.post('/auth/email-exists', async (req, res) => {
+  try {
+    const email = (req.body?.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const { data: authData, error } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+    if (error) throw error;
+    const exists = (authData?.users || []).some(u => (u.email || '').toLowerCase() === email);
+    res.json({ exists });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── ITINERARIES (read-only, for Alfred) ──────────────────────────────
 
 // GET /itineraries — list the authenticated user's saved trips
