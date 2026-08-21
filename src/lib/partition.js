@@ -13,7 +13,7 @@
  * regions.js so there's a single haversine in the codebase's lib layer.
  */
 
-import { haversineKm } from './regions';
+import { haversineKm } from './regions.js';
 
 /*
  * Proximity radius for grouping OUT-OF-DESTINATION places into a shared
