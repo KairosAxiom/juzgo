@@ -10,12 +10,6 @@ import { DAY_COLORS } from '../constants/dayColors';
 import { deriveRegions, orderRegions, interRegionConnector } from '../lib/regions';
 import { partitionByLocation, clusterPlacesByProximity, allocateDays, orderOutGroups, boundsCentroid, describeOutOfDest } from '../lib/partition';
 import styles from './Itinerary.module.css';
-import {
-  fetchDestinationBounds, stripOutOfBoundsCoords, stripTransitNetworkPlaces,
-  geocodeCustomAdds, ensureMustSeePlaces, partitionAndClusterByDay,
-  sequencePlaces, applyDayArchetypeSwaps, buildTravelSegments,
-  parsePlacesJSON, parseEnrichmentJSON,
-} from '../lib/itineraryEngine';
 
 const CATEGORIES = [
   { id: 'food',      emoji: '🍜', title: 'Food & Dining',        desc: 'Restaurants, cafes, street food' },
@@ -37,6 +31,631 @@ const UNIQUE_CATS = [
 ];
 
 const PROXY_URL = 'https://claude-proxy.kairosventure-io.workers.dev/';
+
+/* ────────────────────────────────────────────────────────────────────────
+   Geo helpers — day-clustering, within-day sequencing, travel-time calc.
+   None of this depends on Claude's output; it runs entirely on the lat/lng
+   already attached to each place, so it's deterministic and reliable.
+   ──────────────────────────────────────────────────────────────────────── */
+
+function toNum(v) {
+  const n = typeof v === 'string' ? parseFloat(v) : v;
+  return n;
+}
+
+function isValidCoord(v) {
+  const n = toNum(v);
+  return typeof n === 'number' && !isNaN(n) && n !== 0;
+}
+
+/* Great-circle distance in km */
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+/* Assigns each point to its nearest centroid (haversine) */
+function kmeansAssign(pts, centroids) {
+  return pts.map((p) => {
+    let best = 0, bestDist = Infinity;
+    centroids.forEach((c, i) => {
+      const d = haversineKm(p.lat, p.lng, c.lat, c.lng);
+      if (d < bestDist) { bestDist = d; best = i; }
+    });
+    return best;
+  });
+}
+
+function recomputeCentroids(pts, assignments, k, fallback) {
+  return Array.from({ length: k }, (_, ci) => {
+    const members = pts.filter((_, i) => assignments[i] === ci);
+    if (members.length === 0) return fallback[ci];
+    return {
+      lat: members.reduce((s, m) => s + m.lat, 0) / members.length,
+      lng: members.reduce((s, m) => s + m.lng, 0) / members.length,
+    };
+  });
+}
+
+/* Farthest-point sampling for k-means init — spreads initial centroids out
+   across the data instead of risking two starting near each other, which
+   is what plain random init can do at small N. */
+function farthestPointInit(pts, k) {
+  const centroids = [{ lat: pts[0].lat, lng: pts[0].lng }];
+  while (centroids.length < k) {
+    let bestPt = pts[0], bestDist = -1;
+    pts.forEach((p) => {
+      const d = Math.min(...centroids.map((c) => haversineKm(p.lat, p.lng, c.lat, c.lng)));
+      if (d > bestDist) { bestDist = d; bestPt = p; }
+    });
+    centroids.push({ lat: bestPt.lat, lng: bestPt.lng });
+  }
+  return centroids;
+}
+
+/* Lloyd's algorithm (standard k-means) — converges in a handful of
+   iterations at this scale (≤30 points). Minimizes actual within-cluster
+   distance, unlike a 1D axis projection. Doesn't guarantee equal cluster
+   sizes on its own — balanceClusterSizes() handles that afterward. */
+function kmeansCluster(pts, k, maxIter = 25) {
+  let centroids = farthestPointInit(pts, k);
+  let assignments = new Array(pts.length).fill(0);
+  for (let iter = 0; iter < maxIter; iter++) {
+    const next = kmeansAssign(pts, centroids);
+    const changed = next.some((a, i) => a !== assignments[i]);
+    assignments = next;
+    centroids = recomputeCentroids(pts, assignments, k, centroids);
+    if (!changed) break;
+  }
+  return { assignments, centroids };
+}
+
+/* k-means clusters are rarely equal-sized. Repeatedly move the
+   best-fit point (closest to the target cluster's centroid, among points
+   currently in an oversized cluster) from the most-oversized cluster into
+   the most-undersized one, until every day has its target count. */
+function balanceClusterSizes(pts, assignments, centroids, k) {
+  const n = pts.length;
+  const base = Math.floor(n / k);
+  const remainder = n % k;
+  const targetSizes = new Array(k).fill(base);
+  for (let i = 0; i < remainder; i++) targetSizes[i] += 1;
+
+  const assign = [...assignments];
+  const sizesOf = () => {
+    const s = new Array(k).fill(0);
+    assign.forEach((a) => s[a]++);
+    return s;
+  };
+
+  let guard = 0;
+  while (guard++ < n * k) {
+    const s = sizesOf();
+    const overIdx = s.findIndex((count, i) => count > targetSizes[i]);
+    if (overIdx === -1) break; // totals match, so this means every cluster is exactly at target
+    const underIdx = s.findIndex((count, i) => count < targetSizes[i]);
+    if (underIdx === -1) break;
+
+    let bestPtIdx = -1, bestDist = Infinity;
+    pts.forEach((p, i) => {
+      if (assign[i] !== overIdx) return;
+      const d = haversineKm(p.lat, p.lng, centroids[underIdx].lat, centroids[underIdx].lng);
+      if (d < bestDist) { bestDist = d; bestPtIdx = i; }
+    });
+    if (bestPtIdx === -1) break;
+    assign[bestPtIdx] = underIdx;
+  }
+  return assign;
+}
+
+/* Orders the day-clusters into a sensible day-1-through-day-N sequence by
+   chaining centroids nearest-neighbour style — so Day 2 picks up roughly
+   where Day 1 left off, rather than jumping across town and back. */
+function orderClustersByCentroidPath(centroids) {
+  const remaining = centroids.map((c, i) => ({ ...c, idx: i }));
+  const path = [remaining.shift()];
+  while (remaining.length) {
+    const last = path[path.length - 1];
+    let bestI = 0, bestDist = Infinity;
+    remaining.forEach((c, i) => {
+      const d = haversineKm(last.lat, last.lng, c.lat, c.lng);
+      if (d < bestDist) { bestDist = d; bestI = i; }
+    });
+    path.push(remaining.splice(bestI, 1)[0]);
+  }
+  return path.map((c) => c.idx);
+}
+
+/*
+ * Nominatim (OpenStreetMap's free geocoder, no key required) is used to
+ * fetch a real administrative bounding box for the trip's destination.
+ * This gives ground truth to catch coordinate hallucinations against.
+ * A pure distance/statistics approach was tried first and rejected: "far
+ * from downtown" isn't inherently wrong (e.g. Changi vs. central
+ * Singapore) but "outside the country" is a different kind of wrong, and
+ * in a small, compact destination those two can land at nearly the same
+ * distance — geometry alone can't reliably tell them apart. A real border
+ * can.
+ */
+async function fetchDestinationBounds(destination) {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(destination)}&format=json&limit=1`
+    );
+    const data = await res.json();
+    const hit = Array.isArray(data) ? data[0] : null;
+    if (!hit || !hit.boundingbox) return null;
+    const [south, north, west, east] = hit.boundingbox.map(Number);
+    if ([south, north, west, east].some((n) => isNaN(n))) return null;
+    return { south, north, west, east };
+  } catch {
+    return null; // fail open — if geocoding is unreachable, skip the check rather than blocking the whole flow
+  }
+}
+
+/* True for a place the traveller explicitly named (Stage-1 must-see, which
+   carries source==='user_specified', or a PlacePicker "add your own", which
+   carries isCustom===true). These are trusted differently by the bounds
+   strip below — see stripOutOfBoundsCoords. */
+function isUserNamedPlace(p) {
+  return p.source === 'user_specified' || p.isCustom === true;
+}
+
+/*
+ * Strips coordinates from any place whose lat/lng falls outside the
+ * destination's real bounding box (plus a small buffer for edge rounding).
+ * Places that lose their coordinates this way fall into the existing
+ * "no usable coordinate" handling everywhere downstream (round-robin day
+ * assignment, skipped on the map, skipped in travel-time segments) instead
+ * of getting force-fit into a cluster and dragging it across a border.
+ * No-op if bounds couldn't be fetched — fails open rather than blocking.
+ *
+ * User-named places (Session 29, multi-region support) are EXEMPT from the
+ * tight destination box: a traveller in "Tokyo" may legitimately add Nara
+ * (~370km SW) or Mount Fuji (~100km W), and those must survive as real
+ * coordinates so they can form their own region cards rather than being
+ * treated as hallucinations. They still get a generous country-scale sanity
+ * guard so a genuinely garbage coordinate (wrong continent) is still caught.
+ * AI-returned places keep the original tight strip unchanged — catching
+ * coordinate hallucinations is that strip's entire purpose.
+ */
+function stripOutOfBoundsCoords(places, bounds) {
+  if (!bounds) return places;
+  const buffer = 0.05; // ~5km — generous for edge rounding, tight enough to still catch cross-border hallucinations
+  // Generous country-scale margin applied ONLY to user-named outliers: a few
+  // degrees beyond the destination box (~a few hundred km) tolerates a
+  // legitimately distant day-trip while still rejecting a wrong-country point.
+  const SANITY_MARGIN_DEG = 4;
+  return places.map((p) => {
+    if (!isValidCoord(p.lat) || !isValidCoord(p.lng)) return p;
+    const lat = toNum(p.lat), lng = toNum(p.lng);
+    const inBounds =
+      lat >= bounds.south - buffer && lat <= bounds.north + buffer &&
+      lng >= bounds.west - buffer && lng <= bounds.east + buffer;
+    if (inBounds) return { ...p, lat, lng };
+
+    if (isUserNamedPlace(p)) {
+      const withinSanity =
+        lat >= bounds.south - SANITY_MARGIN_DEG && lat <= bounds.north + SANITY_MARGIN_DEG &&
+        lng >= bounds.west - SANITY_MARGIN_DEG && lng <= bounds.east + SANITY_MARGIN_DEG;
+      if (withinSanity) {
+        // A trusted, deliberately-distant place (day-trip to another city).
+        // Keep its coordinates — the region logic will split it out later.
+        return { ...p, lat, lng };
+      }
+      console.warn(
+        `[Juzgo debug] Rejected user-named "${p.name}" — coordinates (${lat}, ${lng}) are wildly outside the destination even for a day-trip. Likely a bad geocode.`
+      );
+      return { ...p, lat: null, lng: null };
+    }
+
+    console.warn(
+      `[Juzgo debug] Rejected "${p.name}" — coordinates (${lat}, ${lng}) fall outside the destination's real geographic bounds. Likely bad coordinates from Claude.`
+    );
+    return { ...p, lat: null, lng: null };
+  });
+}
+
+/* Removes any Stage-3 output whose subject is a transit network or mode of
+   transport itself rather than a real destination (e.g. "MRT Network",
+   "City Bus System"). The prompt already asks Claude not to generate
+   these, but categories are self-reported by the model, so this is a
+   cheap code-level backstop. */
+function stripTransitNetworkPlaces(places) {
+  return places.filter((p) => p.type !== 'transport');
+}
+
+/* Looks up a single named place via Nominatim — used only as a fallback
+   when a traveller's explicitly-requested place doesn't come back in
+   Claude's Stage 3 JSON, so it can still be force-added with real
+   coordinates rather than silently dropped. */
+async function geocodePlace(placeName, destination) {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(`${placeName}, ${destination}`)}&format=json&limit=1`
+    );
+    const data = await res.json();
+    const hit = Array.isArray(data) ? data[0] : null;
+    if (!hit) return null;
+    const lat = parseFloat(hit.lat), lng = parseFloat(hit.lon);
+    if (isNaN(lat) || isNaN(lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+/*
+ * Geocodes any PlacePicker "add your own" place (isCustom, arriving with
+ * lat/lng === null) so it can be placed on the map, clustered into a day,
+ * and — when it's a genuinely distant spot — split into its own region card
+ * (Session 29, multi-region support). Runs sequentially, one Nominatim
+ * request at a time (same discipline as ensureMustSeePlaces), on the handful
+ * of custom places at most. FAIL-OPEN: if a lookup returns null the place
+ * keeps its null coordinates and behaves exactly as before this change
+ * (listed, dropped into the lightest day, not mapped) — no regression.
+ */
+async function geocodeCustomAdds(places, destination) {
+  const result = [];
+  for (const p of places) {
+    const needsCoords = p.isCustom === true && !(isValidCoord(p.lat) && isValidCoord(p.lng));
+    if (!needsCoords) { result.push(p); continue; }
+    const coords = await geocodePlace(p.name, destination);
+    result.push(coords ? { ...p, lat: coords.lat, lng: coords.lng } : p);
+  }
+  return result;
+}
+
+/*
+ * Guarantees every place the traveller explicitly typed in Stage 1 ends up
+ * in the final list, even if Claude's Stage 3 output dropped it. Does a
+ * loose name-match first (Claude may have returned it with slightly
+ * different phrasing); only geocodes and force-adds if genuinely missing.
+ * Runs sequentially (not Promise.all) since it's a handful of places at
+ * most and keeps Nominatim usage one-request-at-a-time.
+ */
+async function ensureMustSeePlaces(places, mustSeeList, destination) {
+  if (!mustSeeList || mustSeeList.length === 0) return places;
+  const result = [...places];
+  for (const rawName of mustSeeList) {
+    const name = rawName.trim();
+    if (!name) continue;
+    const alreadyPresent = result.some(
+      (p) => p.name && (p.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(p.name.toLowerCase()))
+    );
+    if (alreadyPresent) continue;
+    const coords = await geocodePlace(name, destination);
+    result.push({
+      id: `must-see-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      name,
+      type: 'places',
+      description: 'Added because you specifically asked for it.',
+      trust: 'ai',
+      lat: coords?.lat ?? null,
+      lng: coords?.lng ?? null,
+      source: 'user_specified',
+      tier: 'core',
+    });
+  }
+  return result;
+}
+
+/*
+ * Replaces Claude's own "day" guess with a computed one. Runs balanced
+ * k-means on valid coordinates — actual pairwise proximity, not a 1D
+ * approximation — so each day is the set of places genuinely closest to
+ * each other, sized evenly, then orders the resulting days into a sensible
+ * day-1-to-day-N geographic sequence. Places without usable coordinates
+ * (custom user-added places, or anything stripped by
+ * stripOutOfBoundsCoords for having bad coordinates) fall back to
+ * round-robin — better to place them arbitrarily than let one bad point
+ * corrupt an entire day's cluster.
+ */
+function clusterPlacesByDay(places, dayCount) {
+  const safeDayCount = Math.max(1, dayCount);
+  const valid = places
+    .filter((p) => isValidCoord(p.lat) && isValidCoord(p.lng))
+    .map((p) => ({ ...p, lat: toNum(p.lat), lng: toNum(p.lng) }));
+  const invalid = places.filter((p) => !(isValidCoord(p.lat) && isValidCoord(p.lng)));
+
+  if (valid.length === 0) {
+    return places.map((p, i) => ({ ...p, day: p.day || ((i % safeDayCount) + 1) }));
+  }
+  if (valid.length <= safeDayCount) {
+    // Too few points for k-means to be meaningful — one per day is already optimal.
+    const withDay = valid.map((p, i) => ({ ...p, day: i + 1 }));
+    const invalidWithDay = invalid.map((p, i) => ({ ...p, day: p.day || ((i % safeDayCount) + 1) }));
+    return [...withDay, ...invalidWithDay];
+  }
+
+  const { assignments, centroids } = kmeansCluster(valid, safeDayCount);
+  const balanced = balanceClusterSizes(valid, assignments, centroids, safeDayCount);
+  const finalCentroids = recomputeCentroids(valid, balanced, safeDayCount, centroids);
+  const dayOrder = orderClustersByCentroidPath(finalCentroids);
+  const clusterToDay = {};
+  dayOrder.forEach((clusterIdx, i) => { clusterToDay[clusterIdx] = i + 1; });
+
+  const withDay = valid.map((p, i) => ({ ...p, day: clusterToDay[balanced[i]] }));
+  const invalidWithDay = invalid.map((p, i) => ({ ...p, day: p.day || ((i % safeDayCount) + 1) }));
+  return [...withDay, ...invalidWithDay];
+}
+
+/*
+ * Session 31 — partition-then-group day assignment.
+ *
+ * Replaces the single global clusterPlacesByDay() call. Splits places into the
+ * destination vs out-of-destination groups, allocates the FIXED trip days
+ * proportionally, clusters each partition INDEPENDENTLY (so a Kyoto day never
+ * mixes with a Tokyo day), and lays the days out destination-first then each
+ * out-of-town group as its own contiguous day-block. Every place is tagged with
+ * a `regionKey` ('dest' or a per-group key like 'out-0') so the review UI and
+ * the cross-boundary move guard can reason about which block a stop belongs to.
+ *
+ * Returns { places, layout } where:
+ *   places = every input place, now with .day (1..dayCount) and .regionKey
+ *   layout = [{ key, kind:'dest'|'out', label, dayStart, dayEnd, places:[...],
+ *              centroid, framingKm }]  — ordered blocks, for the review UI
+ *
+ * Fail-open: null bounds ⇒ everything is one 'dest' block clustered exactly as
+ * before (pre-Session-31 behaviour), so a Nominatim outage can't break builds.
+ * `dropped` group indices from allocateDays are folded back into the
+ * destination (their places rejoin 'dest') so nothing is silently lost.
+ */
+function partitionAndClusterByDay(places, dayCount, bounds, destinationName) {
+  const safeDays = Math.max(1, dayCount);
+
+  // Fail-open: no bounds ⇒ single destination block, original behaviour.
+  if (!bounds) {
+    const clustered = clusterPlacesByDay(places, safeDays).map((p) => ({ ...p, regionKey: 'dest' }));
+    return {
+      places: clustered,
+      layout: [{ key: 'dest', kind: 'dest', label: destinationName || 'Main area', dayStart: 1, dayEnd: safeDays, places: clustered, centroid: null, framingKm: 0 }],
+    };
+  }
+
+  const { inDest, outDest } = partitionByLocation(places, bounds);
+  const destCentroid = boundsCentroid(bounds);
+  const outGroups = orderOutGroups(clusterPlacesByProximity(outDest), destCentroid);
+
+  // No out-of-destination places ⇒ single destination block (common case).
+  if (outGroups.length === 0) {
+    const clustered = clusterPlacesByDay(inDest, safeDays).map((p) => ({ ...p, regionKey: 'dest' }));
+    return {
+      places: clustered,
+      layout: [{ key: 'dest', kind: 'dest', label: destinationName || 'Main area', dayStart: 1, dayEnd: safeDays, places: clustered, centroid: destCentroid, framingKm: 0 }],
+    };
+  }
+
+  // Allocate the fixed days: index 0 = destination, then each out-group.
+  const sizes = [inDest.length, ...outGroups.map((g) => g.places.length)];
+  const { alloc, dropped } = allocateDays(safeDays, sizes);
+
+  // Any dropped group (more groups than days) folds its places back into the
+  // destination partition so they're never lost — they just aren't their own
+  // block. (Rare; the review UI surfaces the squeeze.)
+  const droppedSet = new Set(dropped);
+  const foldBack = [];
+  outGroups.forEach((g, gi) => { if (droppedSet.has(gi + 1)) foldBack.push(...g.places); });
+  const destPlacesInput = [...inDest, ...foldBack];
+  const keptOutGroups = outGroups.filter((_, gi) => !droppedSet.has(gi + 1));
+  const keptAlloc = alloc.filter((_, i) => i === 0 || !droppedSet.has(i)); // dest + kept groups
+  const destDays = keptAlloc[0];
+
+  // Cluster the destination block (days 1..destDays).
+  const destClustered = clusterPlacesByDay(destPlacesInput, destDays).map((p) => ({ ...p, regionKey: 'dest' }));
+
+  const layout = [{
+    key: 'dest', kind: 'dest', label: destinationName || 'Main area',
+    dayStart: 1, dayEnd: destDays, places: destClustered, centroid: destCentroid, framingKm: 0,
+  }];
+
+  // Lay out each kept out-group as a contiguous block AFTER the destination.
+  let cursor = destDays;
+  const allOut = [];
+  keptOutGroups.forEach((g, gi) => {
+    const groupDays = keptAlloc[gi + 1];
+    const key = `out-${gi}`;
+    // Cluster within the group (small N) using the same clusterer, then offset
+    // its 1..groupDays numbering to sit after the destination + prior groups.
+    const clustered = clusterPlacesByDay(g.places, groupDays).map((p) => ({
+      ...p, day: p.day + cursor, regionKey: key,
+    }));
+    const km = destCentroid ? Math.round(haversineKm(destCentroid.lat, destCentroid.lng, g.centroid.lat, g.centroid.lng)) : 0;
+    layout.push({
+      key, kind: 'out', label: null, dayStart: cursor + 1, dayEnd: cursor + groupDays,
+      places: clustered, centroid: g.centroid, framingKm: km,
+    });
+    allOut.push(...clustered);
+    cursor += groupDays;
+  });
+
+  return { places: [...destClustered, ...allOut], layout };
+}
+
+/* Total path distance in km, for evaluating 2-opt swaps */
+function pathDistanceKm(path) {
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    total += haversineKm(path[i].lat, path[i].lng, path[i + 1].lat, path[i + 1].lng);
+  }
+  return total;
+}
+
+/* 2-opt local search: repeatedly reverses any segment of the route that
+   shortens total distance, until no improving swap is left. Cleans up the
+   self-crossing paths nearest-neighbour construction is prone to. Cheap at
+   day-sized N (≤10 stops), so it's fine to run to convergence. */
+function twoOptImprove(path, maxPasses = 25) {
+  if (path.length < 4) return path; // need 4+ points for a swap to matter
+  let best = path;
+  let improved = true;
+  let passes = 0;
+  while (improved && passes < maxPasses) {
+    improved = false;
+    passes++;
+    for (let i = 1; i < best.length - 2; i++) {
+      for (let j = i + 1; j < best.length - 1; j++) {
+        const a = best[i - 1], b = best[i], c = best[j], d = best[j + 1];
+        const before = haversineKm(a.lat, a.lng, b.lat, b.lng) + haversineKm(c.lat, c.lng, d.lat, d.lng);
+        const after = haversineKm(a.lat, a.lng, c.lat, c.lng) + haversineKm(b.lat, b.lng, d.lat, d.lng);
+        if (after + 1e-9 < before) {
+          best = [...best.slice(0, i), ...best.slice(i, j + 1).reverse(), ...best.slice(j + 1)];
+          improved = true;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/*
+ * Within a single day, order stops via nearest-neighbour construction, then
+ * clean up with 2-opt so the path doesn't cross itself. Places without
+ * coordinates (custom additions) are appended at the end since we have no
+ * way to place them geographically.
+ */
+function orderStopsWithinDay(dayPlaces) {
+  const withCoords = dayPlaces.filter((p) => isValidCoord(p.lat) && isValidCoord(p.lng));
+  const withoutCoords = dayPlaces.filter((p) => !(isValidCoord(p.lat) && isValidCoord(p.lng)));
+  if (withCoords.length <= 1) return [...withCoords, ...withoutCoords];
+
+  const remaining = withCoords.map((p) => ({ ...p, lat: toNum(p.lat), lng: toNum(p.lng) }));
+  const path = [remaining.shift()];
+  while (remaining.length) {
+    const last = path[path.length - 1];
+    let bestIdx = 0, bestDist = Infinity;
+    remaining.forEach((p, i) => {
+      const d = haversineKm(last.lat, last.lng, p.lat, p.lng);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    });
+    path.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  const optimized = twoOptImprove(path);
+  return [...optimized, ...withoutCoords];
+}
+
+/* Orders every chosen place by day, then geographically within each day */
+function sequencePlaces(places, dayCount) {
+  const ordered = [];
+  for (let day = 1; day <= dayCount; day++) {
+    const dayPlaces = places.filter((p) => Number(p.day) === day);
+    ordered.push(...orderStopsWithinDay(dayPlaces));
+  }
+  // Any place with no day at all (shouldn't normally happen) goes last
+  ordered.push(...places.filter((p) => !p.day));
+  return ordered;
+}
+
+/* Custom places (added free-text in PlacePicker) have no day — drop each
+   into whichever day currently has the fewest stops, so Stage 4 still gets
+   a complete day assignment for every place. */
+function assignMissingDays(places, dayCount) {
+  const counts = new Array(dayCount + 1).fill(0);
+  places.forEach((p) => { if (p.day) counts[p.day] = (counts[p.day] || 0) + 1; });
+  return places.map((p) => {
+    if (p.day) return p;
+    let minDay = 1, minCount = Infinity;
+    for (let d = 1; d <= dayCount; d++) {
+      if ((counts[d] || 0) < minCount) { minCount = counts[d] || 0; minDay = d; }
+    }
+    counts[minDay] = (counts[minDay] || 0) + 1;
+    return { ...p, day: minDay };
+  });
+}
+
+/* Categories treated as "strenuous/outdoor" for day-archetype purposes —
+   not a fit for the arrival day (low energy, luggage likely still with the
+   traveller) or the departure day (checkout has usually happened, so the
+   traveller is luggage-bound and time-boxed toward the airport). */
+const OUTDOOR_STRENUOUS_TYPES = ['nature', 'sports'];
+
+/*
+ * Swaps outdoor/strenuous-type places off the arrival day and the
+ * departure day and onto a middle day, geography permitting. Runs after
+ * day-clustering/day-assignment, before within-day sequencing, so the
+ * later geographic ordering (2-opt etc.) still applies to the corrected
+ * day assignments rather than fighting them. Picks the geographically
+ * closest eligible swap partner on a middle day to minimize disruption to
+ * cluster tightness — this is a targeted correction, not a re-cluster.
+ * No-op on 1-day trips (no "middle day" exists to swap into).
+ */
+function applyDayArchetypeSwaps(places, dayCount) {
+  if (dayCount < 2) return places;
+  const arrivalDay = 1;
+  const departureDay = dayCount;
+  const sensitiveDays = dayCount >= 3 ? [arrivalDay, departureDay] : [departureDay];
+  const middleDays = Array.from({ length: dayCount }, (_, i) => i + 1)
+    .filter((d) => !sensitiveDays.includes(d));
+  if (middleDays.length === 0) return places;
+
+  const result = [...places];
+  result.forEach((p, i) => {
+    if (!sensitiveDays.includes(Number(p.day))) return;
+    if (!OUTDOOR_STRENUOUS_TYPES.includes(p.type)) return;
+
+    let bestIdx = -1, bestDist = Infinity;
+    result.forEach((q, j) => {
+      if (i === j) return;
+      if (!middleDays.includes(Number(q.day))) return;
+      if (OUTDOOR_STRENUOUS_TYPES.includes(q.type)) return;
+      if (!isValidCoord(p.lat) || !isValidCoord(p.lng) || !isValidCoord(q.lat) || !isValidCoord(q.lng)) {
+        if (bestIdx === -1) bestIdx = j; // no coords to rank by — still a valid swap partner
+        return;
+      }
+      const d = haversineKm(toNum(p.lat), toNum(p.lng), toNum(q.lat), toNum(q.lng));
+      if (d < bestDist) { bestDist = d; bestIdx = j; }
+    });
+
+    if (bestIdx !== -1) {
+      const pDay = result[i].day;
+      const qDay = result[bestIdx].day;
+      result[i] = { ...result[i], day: qDay };
+      result[bestIdx] = { ...result[bestIdx], day: pDay };
+    }
+  });
+
+  return result;
+}
+
+/* Crude but grounded mode/time estimate — replace the body of this
+   function with a real OSRM/OpenRouteService/transit-routing call when
+   that lands; every caller already treats taxiMins/transitMins as ground
+   truth, so the swap is a one-function change. transitMins is padded over
+   taxiMins to account for station/stop access, waiting, and a likely
+   transfer — a flat approximation until a real transit API is wired in. */
+function estimateTravelMinutes(km) {
+  if (km <= 1.2) {
+    return { mode: 'walk', mins: Math.max(2, Math.round((km / 4.5) * 60)) };
+  }
+  const taxiMins = Math.max(5, Math.round((km / 22) * 60));
+  const transitMins = taxiMins + 12;
+  return { mode: 'transit', taxiMins, transitMins };
+}
+
+/* Computes travel time only between consecutive same-day stops — the gap
+   between the last stop of one day and the first of the next isn't a
+   walkable/single-trip segment worth quoting a number for. */
+function buildTravelSegments(orderedPlaces) {
+  const segments = [];
+  for (let i = 0; i < orderedPlaces.length - 1; i++) {
+    const a = orderedPlaces[i], b = orderedPlaces[i + 1];
+    if (a.day !== b.day) continue;
+    if (!isValidCoord(a.lat) || !isValidCoord(a.lng) || !isValidCoord(b.lat) || !isValidCoord(b.lng)) continue;
+    const km = haversineKm(toNum(a.lat), toNum(a.lng), toNum(b.lat), toNum(b.lng));
+    const est = estimateTravelMinutes(km);
+    if (est.mode === 'walk') {
+      segments.push({ day: a.day, from: a.name, to: b.name, km: Math.round(km * 10) / 10, mode: 'walk', mins: est.mins });
+    } else {
+      segments.push({ day: a.day, from: a.name, to: b.name, km: Math.round(km * 10) / 10, mode: 'transit', taxiMins: est.taxiMins, transitMins: est.transitMins });
+    }
+  }
+  return segments;
+}
 
 /* Lightweight markdown renderer for chat bubbles — headers, bold, rules, blockquotes, lists */
 function renderMarkdown(text) {
