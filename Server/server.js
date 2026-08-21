@@ -1820,6 +1820,95 @@ app.get('/itineraries/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ============================================================================
+// Alfred memory layer — Increment 1 (text only).
+// Working-memory + recall store. Same house pattern as /itineraries:
+// requireAuth -> req.authUser.id -> supabase (service role) scoped .eq('user_id').
+// Ownership enforced IN CODE because the service-role key bypasses RLS.
+// ============================================================================
+
+// POST /memory — save a memory item (recall note, reminder, appointment draft, etc.)
+// body: { title (required), body?, tags?: string[], kind?, remind_at?, expires_at? }
+app.post('/memory', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { title, body, tags, kind, remind_at, expires_at } = req.body || {};
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ error: 'title is required' });
+    }
+    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment'];
+    const safeKind = ALLOWED_KINDS.includes(kind) ? kind : 'recall';
+    const safeTags = Array.isArray(tags) ? tags.filter(t => typeof t === 'string' && t.trim()).slice(0, 25) : [];
+
+    const { data, error } = await supabase
+      .from('memory_items')
+      .insert({
+        user_id: userId,
+        title: title.trim(),
+        body: (typeof body === 'string' && body.trim()) ? body.trim() : null,
+        tags: safeTags,
+        kind: safeKind,
+        remind_at: remind_at || null,
+        expires_at: expires_at || null,
+      })
+      .select('id, kind, title, body, tags, status, remind_at, expires_at, created_at, updated_at')
+      .single();
+    if (error) throw error;
+    res.json({ item: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /memory — list the user's active items (recent first).
+// Optional ?q=term -> keyword search across title + body (case-insensitive substring).
+// Optional ?kind=reminder -> filter by kind. Only status='active' unless ?all=1.
+app.get('/memory', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { q, kind, all } = req.query;
+
+    let query = supabase
+      .from('memory_items')
+      .select('id, kind, title, body, tags, status, remind_at, expires_at, created_at, updated_at')
+      .eq('user_id', userId);
+
+    if (!all) query = query.eq('status', 'active');
+    if (kind) query = query.eq('kind', kind);
+
+    if (q && q.trim()) {
+      const term = `%${q.trim()}%`;
+      query = query.or(`title.ilike.${term},body.ilike.${term}`);
+    }
+
+    query = query.order('created_at', { ascending: false }).limit(100);
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ items: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /memory/:id — release/remove an item (owner only).
+app.delete('/memory/:id', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { id } = req.params;
+    const { error } = await supabase
+      .from('memory_items')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // POST /referral/credit — awards SGD 2.00 wallet credit to referrer on first purchase
 async function processReferralCredit(referralCode, buyerUserId) {
   if (!referralCode || !referralCode.startsWith('USR-')) return;
