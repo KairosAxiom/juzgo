@@ -284,42 +284,6 @@ Set "dateUncertain": true for any seasonal or limited-run event/exhibit you are 
     setPlacesLoading(false);
   }
 
-  function parsePlacesJSON(text) {
-    const cleaned = text.replace(/```json|```/g, '').trim();
-    // Fast path: well-formed array.
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (Array.isArray(parsed)) return parsed;
-    } catch { /* fall through to salvage */ }
-
-    // Salvage path: the response may be truncated (array never closed) if the
-    // model ran long. Rather than fail the whole trip, pull out every complete
-    // top-level object and keep them — a partial list beats an error screen.
-    const start = cleaned.indexOf('[');
-    if (start === -1) return [];
-    const body = cleaned.slice(start + 1);
-    const objects = [];
-    let depth = 0, inStr = false, esc = false, buf = '';
-    for (const ch of body) {
-      if (esc) { buf += ch; esc = false; continue; }
-      if (ch === '\\') { buf += ch; esc = true; continue; }
-      if (ch === '"') { inStr = !inStr; buf += ch; continue; }
-      if (inStr) { buf += ch; continue; }
-      if (ch === '{') { if (depth === 0) buf = ''; depth++; buf += ch; continue; }
-      if (ch === '}') {
-        depth--;
-        buf += ch;
-        if (depth === 0) {
-          try { objects.push(JSON.parse(buf)); } catch { /* skip malformed */ }
-          buf = '';
-        }
-        continue;
-      }
-      if (depth > 0) buf += ch;
-    }
-    return objects;
-  }
-
   /* ── Stage 3 → 4: build itinerary from chosen places ── */
   async function handleBuildItinerary(chosenPlaces) {
     const dayCount = tripDayCount();
@@ -487,33 +451,6 @@ CRITICAL rules:
 
   /* Defensive JSON parse for the enrichment response: strips fences, tries a
      straight parse, and on failure salvages the first balanced {...} object.
-     Returns null rather than throwing — the caller fails open. */
-  function parseEnrichmentJSON(text) {
-    const cleaned = (text || '').replace(/```json|```/g, '').trim();
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (parsed && typeof parsed === 'object') return parsed;
-    } catch { /* fall through to salvage */ }
-    const start = cleaned.indexOf('{');
-    if (start === -1) return null;
-    let depth = 0, inStr = false, esc = false, buf = '';
-    for (let i = start; i < cleaned.length; i++) {
-      const ch = cleaned[i];
-      if (esc) { buf += ch; esc = false; continue; }
-      if (ch === '\\') { buf += ch; esc = true; continue; }
-      if (ch === '"') { inStr = !inStr; buf += ch; continue; }
-      if (inStr) { buf += ch; continue; }
-      if (ch === '{') { depth++; buf += ch; continue; }
-      if (ch === '}') {
-        depth--; buf += ch;
-        if (depth === 0) { try { return JSON.parse(buf); } catch { return null; } }
-        continue;
-      }
-      if (depth > 0) buf += ch;
-    }
-    return null;
-  }
-
   /* First-time generation, fired by the Confirm button once the traveller is
      happy with the day arrangement. Subsequent moves use the dirty/Regenerate
      flow instead. Enrichment runs first (fail-open), then the prose build. */
