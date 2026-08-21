@@ -24,6 +24,10 @@ import {
   orderOutGroups,
 } from './partition.js';
 
+// Nominatim requires an identifying User-Agent (per its usage policy);
+// header-less requests are 403'd. Single source for all geocode calls.
+const NOMINATIM_UA = 'juzgo.world/1.0 (hello@juzgo.world)';
+
 /* ────────────────────────────────────────────────────────────────────────
    Geo helpers — day-clustering, within-day sequencing, travel-time calc.
    None of this depends on Claude's output; it runs entirely on the lat/lng
@@ -166,7 +170,8 @@ function orderClustersByCentroidPath(centroids) {
 export async function fetchDestinationBounds(destination) {
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(destination)}&format=json&limit=1`
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(destination)}&format=json&limit=1`,
+      { headers: { 'User-Agent': NOMINATIM_UA } }
     );
     const data = await res.json();
     const hit = Array.isArray(data) ? data[0] : null;
@@ -258,7 +263,8 @@ export function stripTransitNetworkPlaces(places) {
 export async function geocodePlace(placeName, destination) {
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(`${placeName}, ${destination}`)}&format=json&limit=1`
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(`${placeName}, ${destination}`)}&format=json&limit=1`,
+      { headers: { 'User-Agent': NOMINATIM_UA } }
     );
     const data = await res.json();
     const hit = Array.isArray(data) ? data[0] : null;
