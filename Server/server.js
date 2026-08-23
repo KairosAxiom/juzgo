@@ -1832,13 +1832,18 @@ app.get('/itineraries/:id', requireAuth, async (req, res) => {
 app.post('/memory', requireAuth, async (req, res) => {
   try {
     const userId = req.authUser.id;
-    const { title, body, tags, kind, remind_at, expires_at } = req.body || {};
+    const { title, body, tags, kind, remind_at, expires_at, report_date, panel } = req.body || {};
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({ error: 'title is required' });
     }
-    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment'];
+    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment', 'health_report'];
     const safeKind = ALLOWED_KINDS.includes(kind) ? kind : 'recall';
     const safeTags = Array.isArray(tags) ? tags.filter(t => typeof t === 'string' && t.trim()).slice(0, 25) : [];
+    // Health-report fields (nullable; only meaningful for kind='health_report').
+    // report_date: clinical date on the report, stored as YYYY-MM-DD. Accept a
+    // plain date string; reject anything not matching to avoid junk in the column.
+    const safeReportDate = (typeof report_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(report_date.trim())) ? report_date.trim() : null;
+    const safePanel = (typeof panel === 'string' && panel.trim()) ? panel.trim().slice(0, 200) : null;
 
     const { data, error } = await supabase
       .from('memory_items')
@@ -1850,8 +1855,10 @@ app.post('/memory', requireAuth, async (req, res) => {
         kind: safeKind,
         remind_at: remind_at || null,
         expires_at: expires_at || null,
+        report_date: safeReportDate,
+        panel: safePanel,
       })
-      .select('id, kind, title, body, tags, status, remind_at, expires_at, created_at, updated_at')
+      .select('id, kind, title, body, tags, status, remind_at, expires_at, report_date, panel, created_at, updated_at')
       .single();
     if (error) throw error;
     res.json({ item: data });
@@ -1870,7 +1877,7 @@ app.get('/memory', requireAuth, async (req, res) => {
 
     let query = supabase
       .from('memory_items')
-      .select('id, kind, title, body, tags, status, remind_at, expires_at, created_at, updated_at')
+      .select('id, kind, title, body, tags, status, remind_at, expires_at, report_date, panel, created_at, updated_at')
       .eq('user_id', userId);
 
     if (!all) query = query.eq('status', 'active');
@@ -1881,7 +1888,14 @@ app.get('/memory', requireAuth, async (req, res) => {
       query = query.or(`title.ilike.${term},body.ilike.${term}`);
     }
 
-    query = query.order('created_at', { ascending: false }).limit(100);
+    // Health-report history reads newest-first by CLINICAL date (report_date),
+    // not upload time — a back-dated report must still slot in correctly.
+    // Everything else keeps the original created_at ordering.
+    if (kind === 'health_report') {
+      query = query.order('report_date', { ascending: false, nullsFirst: false }).limit(100);
+    } else {
+      query = query.order('created_at', { ascending: false }).limit(100);
+    }
 
     const { data, error } = await query;
     if (error) throw error;
