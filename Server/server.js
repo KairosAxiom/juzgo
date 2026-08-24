@@ -1836,7 +1836,7 @@ app.post('/memory', requireAuth, async (req, res) => {
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({ error: 'title is required' });
     }
-    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment', 'health_report'];
+    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment', 'health_report', 'hold'];
     const safeKind = ALLOWED_KINDS.includes(kind) ? kind : 'recall';
     const safeTags = Array.isArray(tags) ? tags.filter(t => typeof t === 'string' && t.trim()).slice(0, 25) : [];
     // Health-report fields (nullable; only meaningful for kind='health_report').
@@ -1882,6 +1882,11 @@ app.get('/memory', requireAuth, async (req, res) => {
 
     if (!all) query = query.eq('status', 'active');
     if (kind) query = query.eq('kind', kind);
+
+    // Lazy self-expiry: hide items whose expires_at has passed. Rows with a
+    // null expires_at (the vast majority) are unaffected. Held items ('hold')
+    // carry a 24h expires_at and simply stop appearing once it lapses; no sweep.
+    if (!all) query = query.or('expires_at.is.null,expires_at.gt.' + new Date().toISOString());
 
     if (q && q.trim()) {
       const term = `%${q.trim()}%`;
