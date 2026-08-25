@@ -1836,7 +1836,7 @@ app.post('/memory', requireAuth, async (req, res) => {
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({ error: 'title is required' });
     }
-    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment', 'health_report', 'hold'];
+    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment', 'health_report', 'hold', 'vital', 'diet'];
     const safeKind = ALLOWED_KINDS.includes(kind) ? kind : 'recall';
     const safeTags = Array.isArray(tags) ? tags.filter(t => typeof t === 'string' && t.trim()).slice(0, 25) : [];
     // Health-report fields (nullable; only meaningful for kind='health_report').
