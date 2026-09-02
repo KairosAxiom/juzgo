@@ -1874,6 +1874,9 @@ app.get('/memory', requireAuth, async (req, res) => {
   try {
     const userId = req.authUser.id;
     const { q, kind, all } = req.query;
+    // Page size: default 100 (unchanged); clients that need the full history
+    // (vitals trend review, the memory panel) pass ?limit= up to 1000.
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 100));
 
     let query = supabase
       .from('memory_items')
@@ -1890,16 +1893,20 @@ app.get('/memory', requireAuth, async (req, res) => {
 
     if (q && q.trim()) {
       const term = `%${q.trim()}%`;
-      query = query.or(`title.ilike.${term},body.ilike.${term}`);
+      // Single-word queries also match the tags array (exact element match;
+      // tags are stored lower-case). Multi-word queries stay title/body only.
+      const word = q.trim().toLowerCase();
+      const tagClause = /^[a-z0-9_-]+$/.test(word) ? `,tags.cs.{${word}}` : '';
+      query = query.or(`title.ilike.${term},body.ilike.${term}${tagClause}`);
     }
 
     // Health-report history reads newest-first by CLINICAL date (report_date),
     // not upload time — a back-dated report must still slot in correctly.
     // Everything else keeps the original created_at ordering.
     if (kind === 'health_report') {
-      query = query.order('report_date', { ascending: false, nullsFirst: false }).limit(100);
+      query = query.order('report_date', { ascending: false, nullsFirst: false }).limit(limit);
     } else {
-      query = query.order('created_at', { ascending: false }).limit(100);
+      query = query.order('created_at', { ascending: false }).limit(limit);
     }
 
     const { data, error } = await query;
