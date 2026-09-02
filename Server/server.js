@@ -1839,6 +1839,10 @@ app.post('/memory', requireAuth, async (req, res) => {
     const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment', 'health_report', 'hold', 'vital', 'diet'];
     const safeKind = ALLOWED_KINDS.includes(kind) ? kind : 'recall';
     const safeTags = Array.isArray(tags) ? tags.filter(t => typeof t === 'string' && t.trim()).slice(0, 25) : [];
+    // Auto-tag the SAVE date (Singapore calendar day) so items can be found or
+    // deleted by when they were saved, independent of the dates they describe.
+    const savedTag = 'saved-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+    if (!safeTags.includes(savedTag)) safeTags.push(savedTag);
     // Health-report fields (nullable; only meaningful for kind='health_report').
     // report_date: clinical date on the report, stored as YYYY-MM-DD. Accept a
     // plain date string; reject anything not matching to avoid junk in the column.
