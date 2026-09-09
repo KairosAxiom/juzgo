@@ -2099,12 +2099,21 @@ app.get('/cron/check-notifications', async (req, res) => {
         const partsObj = Object.fromEntries(localParts.map(p => [p.type, p.value]));
         const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
         const localDay = dayMap[partsObj.weekday];
-        const localHM = `${partsObj.hour}:${partsObj.minute}`;
+        const localMinutesNow = parseInt(partsObj.hour, 10) * 60 + parseInt(partsObj.minute, 10);
         const [prefH, prefM] = pref.time_of_day.split(':');
-        const prefHM = `${prefH}:${prefM}`;
+        const prefMinutes = parseInt(prefH, 10) * 60 + parseInt(prefM, 10);
 
         if (!pref.days_of_week.includes(localDay)) continue;
-        if (localHM !== prefHM) continue; // cron granularity (~5min) means this should catch the exact minute window
+
+        // FIXED (was: exact HH:MM string match — silently never fired unless the
+        // scheduled minute happened to land exactly on the cron's 5-min grid, e.g.
+        // :00/:05/:10. A time like 16:54 would NEVER match a */5 cron, no matter
+        // how long you waited). Now: fire on the first tick on/after the scheduled
+        // time each day. A generous look-back window (90 min) guards against a
+        // briefing being sent hours late if the cron job itself was ever down —
+        // past that window, skip it rather than sending a very stale nudge.
+        const minutesPastDue = localMinutesNow - prefMinutes;
+        if (minutesPastDue < 0 || minutesPastDue > 90) continue;
 
         // Dedupe: don't re-fire if already sent in this local calendar day.
         if (pref.last_fired_at) {
