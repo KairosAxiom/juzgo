@@ -16,7 +16,7 @@ const supabase = createClient(
 
 // VAPID config
 webpush.setVapidDetails(
-  'mailto:dlimyk@gmail.com',
+  'mailto:kairosventure.io@gmail.com',
   process.env.VAPID_PUBLIC_KEY,
   process.env.VAPID_PRIVATE_KEY
 );
@@ -69,31 +69,72 @@ async function requireReseller(req, res, next) {
 
 // ── PUSH NOTIFICATIONS ────────────────────────────────────────────────────────
 
-app.post('/push/subscribe', async (req, res) => {
-  const { userId, subscription } = req.body;
-  if (!userId || !subscription) return res.status(400).json({ error: 'Missing userId or subscription' });
-  const { error } = await supabase
-    .from('push_subscriptions')
-    .upsert({ user_id: userId, subscription }, { onConflict: 'user_id' });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ ok: true });
+// CHANGED (Session 13): now requires real auth (was: trusted a bare userId in
+// the body — anyone who knew a user's id could register a subscription against
+// them). Also now multi-device: keyed on (user_id, endpoint) instead of
+// user_id alone, so Alfred open on phone + desktop both keep receiving pushes
+// instead of the second device silently evicting the first.
+app.post('/push/subscribe', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { subscription } = req.body;
+    const endpoint = subscription?.endpoint;
+    if (!endpoint) return res.status(400).json({ error: 'Missing subscription.endpoint' });
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .upsert(
+        { user_id: userId, endpoint, subscription },
+        { onConflict: 'user_id,endpoint' }
+      );
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// DELETE /push/subscribe — unsubscribe this device (e.g. user turns off
+// notifications, or the frontend detects the browser revoked permission).
+app.delete('/push/subscribe', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .delete()
+      .eq('user_id', userId)
+      .eq('endpoint', endpoint);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CHANGED (Session 13): now sends to EVERY subscribed device for this user,
+// not just one. Existing callers (orders, wallet, referral, VoIP) are
+// unaffected in the common case (one device) and now correctly reach a
+// second device too, if the user ever has one registered.
 async function sendPushToUser(userId, payload) {
   const { data, error } = await supabase
     .from('push_subscriptions')
-    .select('subscription')
-    .eq('user_id', userId)
-    .single();
-  if (error || !data) return;
-  try {
-    await webpush.sendNotification(data.subscription, JSON.stringify(payload));
-  } catch (err) {
-    console.error(`Push failed for user ${userId}:`, err.message);
-    if (err.statusCode === 410) {
-      await supabase.from('push_subscriptions').delete().eq('user_id', userId);
+    .select('id, endpoint, subscription')
+    .eq('user_id', userId);
+  if (error || !data || !data.length) return;
+
+  await Promise.all(data.map(async (row) => {
+    try {
+      await webpush.sendNotification(row.subscription, JSON.stringify(payload));
+    } catch (err) {
+      console.error(`Push failed for user ${userId} (endpoint ${row.endpoint.slice(-12)}):`, err.message);
+      // 404/410 = push service says this subscription is dead (uninstalled,
+      // cleared site data, etc) — stop retrying it.
+      if (err.statusCode === 410 || err.statusCode === 404) {
+        await supabase.from('push_subscriptions').delete().eq('id', row.id);
+      }
     }
-  }
+  }));
 }
 
 app.post('/push/send', async (req, res) => {
@@ -1815,6 +1856,312 @@ app.get('/itineraries/:id', requireAuth, async (req, res) => {
       throw error;
     }
     res.json({ itinerary: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Alfred notifications — Session 13.
+// Two lanes sharing the existing push_subscriptions/sendPushToUser plumbing:
+//   Type A (notification_prefs)  — recurring, e.g. morning_briefing
+//   Type B (event_reminders)     — one-off, tied to a calendar event or memory item
+// Same house pattern as /itineraries: requireAuth -> req.authUser.id ->
+// supabase (service role) scoped .eq('user_id'). Ownership enforced IN CODE.
+// ============================================================================
+
+// GET /notification-prefs — this user's recurring prefs + their default reminder offset
+app.get('/notification-prefs', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { data: prefs, error: prefsError } = await supabase
+      .from('notification_prefs')
+      .select('id, notification_type, enabled, days_of_week, time_of_day, timezone, snoozed_until, last_fired_at')
+      .eq('user_id', userId);
+    if (prefsError) throw prefsError;
+
+    const { data: defaults, error: defaultsError } = await supabase
+      .from('reminder_defaults')
+      .select('default_offset_minutes')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (defaultsError) throw defaultsError;
+
+    res.json({
+      prefs: prefs || [],
+      default_offset_minutes: defaults?.default_offset_minutes ?? 120,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /notification-prefs — create/update a recurring notification
+// Body: { notification_type, enabled, days_of_week, time_of_day, timezone }
+app.post('/notification-prefs', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const ALLOWED_TYPES = ['morning_briefing'];
+    const { notification_type, enabled, days_of_week, time_of_day, timezone } = req.body;
+
+    if (!ALLOWED_TYPES.includes(notification_type)) {
+      return res.status(400).json({ error: 'Invalid notification_type' });
+    }
+
+    const row = {
+      user_id: userId,
+      notification_type,
+      updated_at: new Date().toISOString(),
+    };
+    if (enabled !== undefined) row.enabled = enabled;
+    if (days_of_week !== undefined) row.days_of_week = days_of_week;
+    if (time_of_day !== undefined) row.time_of_day = time_of_day;
+    if (timezone !== undefined) row.timezone = timezone;
+
+    const { data, error } = await supabase
+      .from('notification_prefs')
+      .upsert(row, { onConflict: 'user_id,notification_type' })
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.json({ pref: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /notification-prefs/:type/snooze — "remind me in 30 min" / "later at 6pm"
+// Body: { snooze_until: ISO timestamp }
+app.post('/notification-prefs/:type/snooze', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { type } = req.params;
+    const { snooze_until } = req.body;
+    if (!snooze_until) return res.status(400).json({ error: 'Missing snooze_until' });
+
+    const { error } = await supabase
+      .from('notification_prefs')
+      .update({ snoozed_until: snooze_until, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('notification_type', type);
+    if (error) throw error;
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /reminder-defaults — set the default "how long before" offset (default 2h)
+// Body: { default_offset_minutes }
+app.post('/reminder-defaults', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { default_offset_minutes } = req.body;
+    if (!Number.isFinite(default_offset_minutes) || default_offset_minutes <= 0) {
+      return res.status(400).json({ error: 'default_offset_minutes must be a positive number' });
+    }
+    const { data, error } = await supabase
+      .from('reminder_defaults')
+      .upsert(
+        { user_id: userId, default_offset_minutes, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      )
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ default_offset_minutes: data.default_offset_minutes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /event-reminders — flag a calendar event or memory item for a reminder push
+// Body: { source_type, source_id, title, event_at, offset_minutes? }
+// offset_minutes is optional — falls back to the user's reminder_defaults.
+app.post('/event-reminders', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { source_type, source_id, title, event_at } = req.body;
+    let { offset_minutes } = req.body;
+
+    if (!['calendar_event', 'memory_item'].includes(source_type)) {
+      return res.status(400).json({ error: 'Invalid source_type' });
+    }
+    if (!source_id || !title || !event_at) {
+      return res.status(400).json({ error: 'Missing source_id, title, or event_at' });
+    }
+
+    if (offset_minutes === undefined || offset_minutes === null) {
+      const { data: defaults } = await supabase
+        .from('reminder_defaults')
+        .select('default_offset_minutes')
+        .eq('user_id', userId)
+        .maybeSingle();
+      offset_minutes = defaults?.default_offset_minutes ?? 120;
+    }
+
+    const eventAtDate = new Date(event_at);
+    if (isNaN(eventAtDate.getTime())) return res.status(400).json({ error: 'Invalid event_at' });
+    const notifyAt = new Date(eventAtDate.getTime() - offset_minutes * 60000);
+
+    const { data, error } = await supabase
+      .from('event_reminders')
+      .upsert(
+        {
+          user_id: userId,
+          source_type,
+          source_id: String(source_id),
+          title,
+          event_at: eventAtDate.toISOString(),
+          offset_minutes,
+          notify_at: notifyAt.toISOString(),
+          notified: false,
+          notified_at: null,
+        },
+        { onConflict: 'source_type,source_id' }
+      )
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.json({ reminder: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /event-reminders/:sourceType/:sourceId — cancel a reminder
+// (e.g. the underlying calendar event got deleted)
+app.delete('/event-reminders/:sourceType/:sourceId', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { sourceType, sourceId } = req.params;
+    const { error } = await supabase
+      .from('event_reminders')
+      .delete()
+      .eq('user_id', userId)
+      .eq('source_type', sourceType)
+      .eq('source_id', sourceId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── CRON — due-notification check ───────────────────────────────────────────
+// Different auth shape from everything above on purpose: this scans across
+// ALL users, not one JWT-scoped user, so it can't use requireAuth. Gated by
+// a shared secret Render's cron job sends as a header — never exposed to
+// the browser, never routed through Alfred's normal juzgoFetch auth chain.
+//
+// Render setup: a Cron Job hitting this URL every 5 min with
+//   header: X-Cron-Secret: <CRON_SECRET>
+//
+// Two independent due-checks per tick:
+//   1. notification_prefs rows whose local time-of-day has arrived (Type A)
+//   2. event_reminders rows whose notify_at has passed (Type B)
+app.get('/cron/check-notifications', async (req, res) => {
+  try {
+    const secret = req.headers['x-cron-secret'];
+    if (!secret || secret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const results = { briefings_sent: 0, reminders_sent: 0, errors: [] };
+    const nowUTC = new Date();
+
+    // ---- Type A: recurring (morning_briefing) ----
+    // Pull all enabled prefs; evaluate "is it due" in JS per-row because each
+    // row can have its own timezone (Intl handles the conversion cleanly —
+    // no need for a Postgres timezone-aware query here).
+    const { data: recurringPrefs, error: prefsError } = await supabase
+      .from('notification_prefs')
+      .select('id, user_id, notification_type, enabled, days_of_week, time_of_day, timezone, snoozed_until, last_fired_at')
+      .eq('enabled', true);
+    if (prefsError) throw prefsError;
+
+    for (const pref of recurringPrefs || []) {
+      try {
+        // Snoozed? Skip until the snooze window passes.
+        if (pref.snoozed_until && new Date(pref.snoozed_until) > nowUTC) continue;
+
+        // Compute the user's local time/day via their stored IANA timezone.
+        const localParts = new Intl.DateTimeFormat('en-US', {
+          timeZone: pref.timezone,
+          weekday: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).formatToParts(nowUTC);
+        const partsObj = Object.fromEntries(localParts.map(p => [p.type, p.value]));
+        const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const localDay = dayMap[partsObj.weekday];
+        const localHM = `${partsObj.hour}:${partsObj.minute}`;
+        const [prefH, prefM] = pref.time_of_day.split(':');
+        const prefHM = `${prefH}:${prefM}`;
+
+        if (!pref.days_of_week.includes(localDay)) continue;
+        if (localHM !== prefHM) continue; // cron granularity (~5min) means this should catch the exact minute window
+
+        // Dedupe: don't re-fire if already sent in this local calendar day.
+        if (pref.last_fired_at) {
+          const lastLocalDay = new Intl.DateTimeFormat('en-CA', { timeZone: pref.timezone })
+            .format(new Date(pref.last_fired_at));
+          const todayLocalDay = new Intl.DateTimeFormat('en-CA', { timeZone: pref.timezone })
+            .format(nowUTC);
+          if (lastLocalDay === todayLocalDay) continue;
+        }
+
+        if (pref.notification_type === 'morning_briefing') {
+          await sendPushToUser(pref.user_id, {
+            notification_type: 'morning_briefing',
+            title: 'Alfred',
+            body: 'Ready for your morning brief?',
+            tag: 'morning_briefing',
+          });
+          results.briefings_sent++;
+        }
+
+        await supabase
+          .from('notification_prefs')
+          .update({ last_fired_at: nowUTC.toISOString(), snoozed_until: null })
+          .eq('id', pref.id);
+      } catch (innerErr) {
+        results.errors.push({ pref_id: pref.id, error: innerErr.message });
+      }
+    }
+
+    // ---- Type B: one-off event reminders ----
+    const { data: dueReminders, error: remindersError } = await supabase
+      .from('event_reminders')
+      .select('id, user_id, title, event_at, source_type, source_id')
+      .eq('notified', false)
+      .lte('notify_at', nowUTC.toISOString());
+    if (remindersError) throw remindersError;
+
+    for (const reminder of dueReminders || []) {
+      try {
+        await sendPushToUser(reminder.user_id, {
+          notification_type: 'event_reminder',
+          title: 'Alfred',
+          body: reminder.title,
+          tag: `event_reminder_${reminder.id}`,
+          data: { source_type: reminder.source_type, source_id: reminder.source_id },
+        });
+        await supabase
+          .from('event_reminders')
+          .update({ notified: true, notified_at: nowUTC.toISOString() })
+          .eq('id', reminder.id);
+        results.reminders_sent++;
+      } catch (innerErr) {
+        results.errors.push({ reminder_id: reminder.id, error: innerErr.message });
+      }
+    }
+
+    res.json(results);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
