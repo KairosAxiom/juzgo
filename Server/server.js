@@ -127,10 +127,14 @@ async function sendPushToUser(userId, payload) {
     try {
       await webpush.sendNotification(row.subscription, JSON.stringify(payload));
     } catch (err) {
-      console.error(`Push failed for user ${userId} (endpoint ${row.endpoint.slice(-12)}):`, err.message);
-      // 404/410 = push service says this subscription is dead (uninstalled,
-      // cleared site data, etc) — stop retrying it.
-      if (err.statusCode === 410 || err.statusCode === 404) {
+      console.error(`Push failed for user ${userId} (endpoint ${row.endpoint.slice(-12)}), status ${err.statusCode}:`, err.message);
+      // Any 4xx from the push service is permanent and unrecoverable — retrying
+      // won't help. This includes 404/410 (subscription gone: uninstalled,
+      // cleared site data) AND other 4xx codes like a VAPID key mismatch
+      // (the earlier bug this session hit — those errors don't come back as
+      // 404/410 specifically, but are just as permanently dead). A 5xx or
+      // network error, by contrast, might be transient — don't delete on those.
+      if (err.statusCode >= 400 && err.statusCode < 500) {
         await supabase.from('push_subscriptions').delete().eq('id', row.id);
       }
     }
