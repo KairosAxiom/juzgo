@@ -2298,6 +2298,71 @@ app.delete('/memory/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── Alfred conversation sync (Session 14) ─────────────────────────────────
+// Opt-in. A row in alfred_conversations == sync ON for that account.
+// Service-role key bypasses RLS, so EVERY query is scoped by user_id in code.
+
+// GET /conversation — the user's synced transcript, or null if sync is off.
+app.get('/conversation', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { data, error } = await supabase
+      .from('alfred_conversations')
+      .select('log, updated_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    res.json({ conversation: data || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /conversation { log: [...], enable?: bool }
+//   enable=true  -> create or replace (turning sync on)
+//   enable=false -> update ONLY if a row exists; if sync was turned off from
+//                   another device, nothing is written and synced:false returns.
+app.put('/conversation', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { log, enable } = req.body || {};
+    if (!Array.isArray(log)) return res.status(400).json({ error: 'log must be an array' });
+    const updated_at = new Date().toISOString();
+    if (enable === true) {
+      const { error } = await supabase
+        .from('alfred_conversations')
+        .upsert({ user_id: userId, log, updated_at }, { onConflict: 'user_id' });
+      if (error) throw error;
+      return res.json({ synced: true, updated_at });
+    }
+    const { data, error } = await supabase
+      .from('alfred_conversations')
+      .update({ log, updated_at })
+      .eq('user_id', userId)
+      .select('updated_at');
+    if (error) throw error;
+    if (!data || data.length === 0) return res.json({ synced: false });
+    res.json({ synced: true, updated_at });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /conversation — turn sync off: remove the server copy (owner only).
+app.delete('/conversation', requireAuth, async (req, res) => {
+  try {
+    const userId = req.authUser.id;
+    const { error } = await supabase
+      .from('alfred_conversations')
+      .delete()
+      .eq('user_id', userId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // POST /referral/credit — awards SGD 2.00 wallet credit to referrer on first purchase
 async function processReferralCredit(referralCode, buyerUserId) {
