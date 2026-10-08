@@ -2363,6 +2363,32 @@ app.delete('/conversation', requireAuth, async (req, res) => {
   }
 });
 
+// ── Alfred → Anthropic FALLBACK route (Session 14) ────────────────────────
+// Alfred normally calls Claude via the alfred-proxy Cloudflare Worker. When the
+// Worker happens to run in a location Anthropic doesn't serve (e.g. Hong Kong),
+// Anthropic answers 403 "Request not allowed". Alfred then retries here: Render
+// runs in Singapore, a fixed supported location.
+// - requireAuth: signed-in Alfred users only (never an open relay for the key).
+// - Body arrives as text/plain so the global express.json() (100 KB cap) skips
+//   it; this route takes up to 25 MB (PDF/image attachments) and forwards the
+//   JSON string untouched.
+app.post('/claude', requireAuth, express.text({ type: 'text/plain', limit: '25mb' }), async (req, res) => {
+  try {
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!key) return res.status(503).json({ type: 'error', error: { type: 'config_error', message: 'ANTHROPIC_API_KEY not set on server' } });
+    if (typeof req.body !== 'string' || !req.body.length) return res.status(400).json({ type: 'error', error: { type: 'bad_request', message: 'empty body' } });
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: req.body,
+    });
+    const text = await r.text();
+    res.status(r.status).type('application/json').send(text);
+  } catch (err) {
+    res.status(502).json({ type: 'error', error: { type: 'fallback_error', message: err.message } });
+  }
+});
+
 
 // POST /referral/credit — awards SGD 2.00 wallet credit to referrer on first purchase
 async function processReferralCredit(referralCode, buyerUserId) {
