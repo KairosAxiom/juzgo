@@ -2196,7 +2196,7 @@ app.post('/memory', requireAuth, async (req, res) => {
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({ error: 'title is required' });
     }
-    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment', 'health_report', 'hold', 'vital', 'diet'];
+    const ALLOWED_KINDS = ['recall', 'reminder', 'activity', 'document', 'appointment', 'health_report', 'hold', 'vital', 'diet', 'note'];
     const safeKind = ALLOWED_KINDS.includes(kind) ? kind : 'recall';
     const safeTags = Array.isArray(tags) ? tags.filter(t => typeof t === 'string' && t.trim()).slice(0, 25) : [];
     // Auto-tag the SAVE date (Singapore calendar day) so items can be found or
