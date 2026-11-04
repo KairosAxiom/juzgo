@@ -2192,7 +2192,7 @@ app.get('/cron/check-notifications', async (req, res) => {
 app.post('/memory', requireAuth, async (req, res) => {
   try {
     const userId = req.authUser.id;
-    const { title, body, tags, kind, remind_at, expires_at, report_date, panel } = req.body || {};
+    const { title, body, tags, kind, remind_at, expires_at, report_date, panel, results } = req.body || {};
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({ error: 'title is required' });
     }
@@ -2208,6 +2208,24 @@ app.post('/memory', requireAuth, async (req, res) => {
     // plain date string; reject anything not matching to avoid junk in the column.
     const safeReportDate = (typeof report_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(report_date.trim())) ? report_date.trim() : null;
     const safePanel = (typeof panel === 'string' && panel.trim()) ? panel.trim().slice(0, 200) : null;
+    // results: structured lab values for health_report rows - [{ test, value, unit, range, flag }].
+    // Drives Alfred's lab comparison table and trend charts. Junk entries are dropped.
+    let safeResults = null;
+    if (Array.isArray(results)) {
+      const clean = results.slice(0, 200).map(r => {
+        if (!r || typeof r !== 'object') return null;
+        const test = typeof r.test === 'string' ? r.test.trim().slice(0, 80) : '';
+        const value = typeof r.value === 'number' ? r.value : parseFloat(r.value);
+        if (!test || !Number.isFinite(value)) return null;
+        return {
+          test, value,
+          unit: (typeof r.unit === 'string' && r.unit.trim()) ? r.unit.trim().slice(0, 30) : null,
+          range: (r.range != null && String(r.range).trim()) ? String(r.range).trim().slice(0, 80) : null,
+          flag: r.flag === true,
+        };
+      }).filter(Boolean);
+      if (clean.length) safeResults = clean;
+    }
 
     const { data, error } = await supabase
       .from('memory_items')
@@ -2221,8 +2239,9 @@ app.post('/memory', requireAuth, async (req, res) => {
         expires_at: expires_at || null,
         report_date: safeReportDate,
         panel: safePanel,
+        results: safeResults,
       })
-      .select('id, kind, title, body, tags, status, remind_at, expires_at, report_date, panel, created_at, updated_at')
+      .select('id, kind, title, body, tags, status, remind_at, expires_at, report_date, panel, results, created_at, updated_at')
       .single();
     if (error) throw error;
     res.json({ item: data });
@@ -2244,7 +2263,7 @@ app.get('/memory', requireAuth, async (req, res) => {
 
     let query = supabase
       .from('memory_items')
-      .select('id, kind, title, body, tags, status, remind_at, expires_at, report_date, panel, created_at, updated_at')
+      .select('id, kind, title, body, tags, status, remind_at, expires_at, report_date, panel, results, created_at, updated_at')
       .eq('user_id', userId);
 
     if (!all) query = query.eq('status', 'active');
